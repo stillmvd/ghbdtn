@@ -115,6 +115,7 @@ struct Worker {
     tail: Option<Shown>,
     edit: Option<Shown>,
     glued: bool,
+    ctx: Option<String>,
     book: UndoBook,
     caps: bool,
     backlog: VecDeque<HookEvent>,
@@ -160,6 +161,7 @@ impl Worker {
             tail: None,
             edit: None,
             glued: false,
+            ctx: None,
             book: UndoBook::default(),
             caps: unsafe { GetKeyState(VK_CAPITAL.0 as i32) } & 1 != 0,
             backlog: VecDeque::new(),
@@ -230,6 +232,7 @@ impl Worker {
         self.tail = None;
         self.edit = None;
         self.glued = false;
+        self.ctx = None;
         self.book.close();
         ARMED_UNDO.store(false, SeqCst);
         PENDING.store(false, SeqCst);
@@ -248,6 +251,7 @@ impl Worker {
         }
         self.last = None;
         self.prev = None;
+        self.ctx = None;
         if self.edit.is_none() {
             self.edit = self.tail.take();
         }
@@ -433,6 +437,9 @@ impl Worker {
         let tail = self.tail.take();
         let Some(lang) = self.word_lang.take().filter(|_| !self.word.is_empty()) else {
             self.last = None;
+            if sep != Separator::Space {
+                self.ctx = None;
+            }
             if enter_eaten {
                 output::enter();
             }
@@ -452,8 +459,13 @@ impl Worker {
         let (status, mode) = self.evaluate();
         let cfg = self.cfg();
         let fix = (status == Status::Working && !keys.is_empty() && !glued && (sep != Separator::Enter || enter_eaten))
-            .then(|| decide(&WordInput { keys: &keys, lang, code_mode: mode == Mode::Code }, &self.dicts, &cfg))
+            .then(|| decide(&WordInput { keys: &keys, lang, code_mode: mode == Mode::Code, prev: self.ctx.as_deref() }, &self.dicts, &cfg))
             .flatten();
+        let plain = |t: &str| (sep == Separator::Space && !glued && t.chars().all(|c| c.is_alphabetic() || c == '-')).then(|| t.to_string());
+        self.ctx = match &fix {
+            Some(f) => plain(&f.text),
+            None => plain(&render(&keys, lang)),
+        };
         let sep_typed = sep.text(lang);
         match fix {
             Some(fix) => {
@@ -512,6 +524,7 @@ impl Worker {
     fn undo(&mut self, k: &RawKey) {
         self.tail = None;
         self.edit = None;
+        self.ctx = None;
         ARMED_UNDO.store(false, SeqCst);
         let Some(action) = self.book.take() else {
             if !k.shift && !k.alt {
@@ -539,6 +552,7 @@ impl Worker {
         self.tail = None;
         self.edit = None;
         self.glued = false;
+        self.ctx = None;
         let (keys, lang, sep) = if !self.word.is_empty() {
             let Some(lang) = self.word_lang.take() else { return };
             (self.word.take(), lang, String::new())

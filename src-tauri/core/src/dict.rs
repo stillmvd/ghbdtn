@@ -5,6 +5,8 @@ use std::collections::{HashMap, HashSet};
 const KNOWN_FREQ: u32 = 30;
 const TECH_FREQ: u32 = 1000;
 const TERM_FREQ: u32 = 300;
+pub const BIGRAM_SCALE: f64 = 16.0;
+static RU_BIGRAMS: &[u8] = include_bytes!("../data/ru.bigram");
 
 pub struct Dictionaries {
     ru: Dictionary,
@@ -13,6 +15,7 @@ pub struct Dictionaries {
     en_freq: HashMap<Box<str>, u32>,
     extra: HashSet<String>,
     ru_by_first: ByFirst,
+    ru_ids: HashMap<Box<str>, u32>,
 }
 
 type ByFirst = HashMap<char, Vec<(Box<[char]>, u32)>>;
@@ -55,7 +58,8 @@ impl Dictionaries {
             }
         }
         let ru_freq = parse_freq(include_str!("../data/ru.freq"));
-        Dictionaries { ru, en, ru_by_first: by_first(&ru_freq), ru_freq, en_freq, extra: HashSet::new() }
+        let ru_ids = include_str!("../data/ru.bigram.words").lines().enumerate().map(|(i, w)| (w.into(), i as u32)).collect();
+        Dictionaries { ru, en, ru_by_first: by_first(&ru_freq), ru_freq, en_freq, extra: HashSet::new(), ru_ids }
     }
 
     pub fn add_user_words(&mut self, text: &str) -> usize {
@@ -103,6 +107,18 @@ impl Dictionaries {
             Lang::Ru => self.ru_by_first.get(&first).map(Vec::as_slice).unwrap_or(&[]),
             Lang::En => &[],
         }
+    }
+
+    pub fn bigram(&self, lang: Lang, prev: &str, word: &str) -> u32 {
+        if lang != Lang::Ru {
+            return 0;
+        }
+        let id = |w: &str| self.ru_ids.get(w.trim_end_matches('-').to_lowercase().replace('ё', "е").as_str()).copied();
+        let (Some(a), Some(b)) = (id(prev), id(word)) else { return 0 };
+        let key = |r: &[u8; 7]| (u32::from_le_bytes([r[0], r[1], r[2], 0]), u32::from_le_bytes([r[3], r[4], r[5], 0]));
+        let (recs, _) = RU_BIGRAMS.as_chunks::<7>();
+        recs.binary_search_by(|r| key(r).cmp(&(a, b)))
+            .map_or(0, |i| (recs[i][6] as f64 / BIGRAM_SCALE).exp().round() as u32)
     }
 
     fn lookup(&self, lang: Lang, word: &str, min_freq: u32) -> bool {

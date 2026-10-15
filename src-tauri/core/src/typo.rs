@@ -13,6 +13,10 @@ const NEAR_WEIGHT: f32 = 0.5;
 const FAR_MIN_LEN: usize = 6;
 const SHORT_MIN_FREQ: u32 = 20_000;
 const SHORT_LEN: usize = 3;
+const PAIR_LEN: usize = 2;
+const PAIR_MIN: u32 = 20;
+const CTX_MIN: u32 = 3;
+const CTX_RATIO: u32 = 10;
 const FAR_SHORT: f32 = 1.2;
 const FAR_LONG: f32 = 1.6;
 
@@ -155,7 +159,7 @@ impl Far<'_> {
     }
 }
 
-fn far_fix(typed: &str, chars: &[char], lang: Lang, dicts: &Dictionaries) -> Option<String> {
+fn far_fix(typed: &str, chars: &[char], prev: Option<&str>, lang: Lang, dicts: &Dictionaries) -> Option<String> {
     if chars.len() < FAR_MIN_LEN || typed.chars().next().is_some_and(char::is_uppercase) || chars.contains(&'-') {
         return None;
     }
@@ -186,11 +190,10 @@ fn far_fix(typed: &str, chars: &[char], lang: Lang, dicts: &Dictionaries) -> Opt
         }
     }
     scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let (best, cand) = scored.first()?;
-    if scored.get(1).is_some_and(|(second, _)| best - second < GAP) {
-        return None;
-    }
-    Some(apply_case(typed, &cand.iter().collect::<String>()))
+    let (best, _) = scored.first()?;
+    let close: Vec<String> = scored.iter().take_while(|(s, _)| best - s < GAP).map(|(_, c)| c.iter().collect()).collect();
+    let close: Vec<&str> = close.iter().map(String::as_str).collect();
+    pick(prev, &close, lang, dicts).map(|c| apply_case(typed, c))
 }
 
 pub fn near_freq(typed: &str, lang: Lang, dicts: &Dictionaries) -> Option<u32> {
@@ -205,8 +208,8 @@ pub fn near_freq(typed: &str, lang: Lang, dicts: &Dictionaries) -> Option<u32> {
         .max()
 }
 
-fn short_fix(typed: &str, chars: &[char], lang: Lang, dicts: &Dictionaries) -> Option<String> {
-    if lang != Lang::Ru || chars.len() != SHORT_LEN || typed.chars().any(char::is_uppercase) {
+fn short_fix(typed: &str, chars: &[char], prev: Option<&str>, lang: Lang, dicts: &Dictionaries) -> Option<String> {
+    if lang != Lang::Ru || !(PAIR_LEN..=SHORT_LEN).contains(&chars.len()) || typed.chars().any(char::is_uppercase) {
         return None;
     }
     if !chars.iter().all(|&c| lang.owns_letter(c)) || dicts.seen(lang, typed) {
@@ -228,18 +231,45 @@ fn short_fix(typed: &str, chars: &[char], lang: Lang, dicts: &Dictionaries) -> O
     let mut scored: Vec<(u32, String)> = cands.into_iter().filter(|c| !c.contains('ё') || dicts.certain(lang, c)).map(|c| (dicts.freq(lang, &c), c)).filter(|(f, _)| *f >= SHORT_MIN_FREQ).collect();
     scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
     scored.dedup_by(|a, b| a.1 == b.1);
-    let (best, cand) = scored.first()?;
-    if scored.get(1).is_some_and(|(second, _)| (*best as f32 / *second as f32).ln() < GAP) {
-        return None;
+    if chars.len() == PAIR_LEN {
+        if chars[0] == chars[1] {
+            return None;
+        }
+        let all: Vec<&str> = scored.iter().map(|(_, c)| c.as_str()).collect();
+        let cand = by_context(prev, &all, lang, dicts)?;
+        return (dicts.bigram(lang, prev?, cand) >= PAIR_MIN).then(|| cand.to_string());
     }
-    Some(cand.clone())
+    let (best, _) = scored.first()?;
+    let close: Vec<&str> = scored.iter().take_while(|(f, _)| (*best as f32 / *f as f32).ln() < GAP).map(|(_, c)| c.as_str()).collect();
+    pick(prev, &close, lang, dicts).map(String::from)
+}
+
+fn by_context<'a>(prev: Option<&str>, cands: &[&'a str], lang: Lang, dicts: &Dictionaries) -> Option<&'a str> {
+    let prev = prev?;
+    let mut s: Vec<(u32, &str)> = cands.iter().map(|c| (dicts.bigram(lang, prev, c), *c)).collect();
+    s.sort_by_key(|x| std::cmp::Reverse(x.0));
+    let (top, best) = *s.first()?;
+    let second = s.get(1).map_or(0, |x| x.0);
+    (top >= CTX_MIN && top >= CTX_RATIO * second.max(1)).then_some(best)
+}
+
+fn pick<'a>(prev: Option<&str>, close: &[&'a str], lang: Lang, dicts: &Dictionaries) -> Option<&'a str> {
+    match close {
+        [] => None,
+        [one] => Some(one),
+        _ => by_context(prev, close, lang, dicts),
+    }
 }
 
 pub fn best_fix(typed: &str, lang: Lang, dicts: &Dictionaries) -> Option<String> {
+    fix_after(typed, None, lang, dicts)
+}
+
+pub fn fix_after(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionaries) -> Option<String> {
     let lower = typed.to_lowercase();
     let chars: Vec<char> = lower.chars().collect();
     if chars.len() < MIN_LEN {
-        return short_fix(typed, &chars, lang, dicts);
+        return short_fix(typed, &chars, prev, lang, dicts);
     }
     if !chars.iter().all(|&c| lang.owns_letter(c) || c == '-') || dicts.known(lang, typed) {
         return None;
@@ -256,12 +286,11 @@ pub fn best_fix(typed: &str, lang: Lang, dicts: &Dictionaries) -> Option<String>
         .collect();
     scored.sort_by(|a, b| b.0.total_cmp(&a.0));
     if scored.is_empty() {
-        return far_fix(typed, &chars, lang, dicts).filter(|c| typed_freq == 0 || dicts.freq(lang, &c.to_lowercase()) >= OUTRANK * typed_freq);
+        return far_fix(typed, &chars, prev, lang, dicts).filter(|c| typed_freq == 0 || dicts.freq(lang, &c.to_lowercase()) >= OUTRANK * typed_freq);
     }
-    let (best, cand) = scored.first()?;
-    if scored.get(1).is_some_and(|(second, _)| best - second < GAP) {
-        return None;
-    }
+    let (best, _) = scored.first()?;
+    let close: Vec<&str> = scored.iter().take_while(|(s, _)| best - s < GAP).map(|(_, c)| c.as_str()).collect();
+    let cand = pick(prev, &close, lang, dicts)?;
     if typed_freq > 0 && dicts.freq(lang, cand) < OUTRANK * typed_freq {
         return None;
     }
@@ -304,6 +333,18 @@ mod tests {
         assert_eq!(best_fix("нкт", Lang::Ru, dicts()).as_deref(), Some("нет"));
         for w in ["нк", "жк", "ыы", "спс", "мск", "спб", "лол", "кек", "ааа", "Чтл", "шдё", "щвё", "ьёз", "гёе"] {
             assert_eq!(best_fix(w, Lang::Ru, dicts()), None, "{w}");
+        }
+    }
+
+    #[test]
+    fn context_picks_between_close_candidates() {
+        assert_eq!(fix_after("нк", Some("я"), Lang::Ru, dicts()).as_deref(), Some("не"));
+        assert_eq!(fix_after("нк", Some("это"), Lang::Ru, dicts()).as_deref(), Some("не"));
+        assert_eq!(fix_after("нк", None, Lang::Ru, dicts()), None);
+        for prev in ["в", "и", "на", "это", "мой", "новый", "я", "а"] {
+            for w in ["жк", "пк", "вк", "тг", "мб", "хз", "пж", "спс", "мск", "спб", "ыы", "ок"] {
+                assert_eq!(fix_after(w, Some(prev), Lang::Ru, dicts()), None, "{prev} {w}");
+            }
         }
     }
 

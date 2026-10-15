@@ -125,6 +125,8 @@ fn main() {
         ("пкфафтф ", Lang::Ru, "grafana "),
         ("приверяю ", Lang::Ru, "проверяю "),
         ("увдел ", Lang::Ru, "увидел "),
+        ("я нк знаю ", Lang::Ru, "я не знаю "),
+        ("я, нк ", Lang::Ru, "я, нк "),
     ];
     let mut failed = 0;
     for (input_text, l, want) in cases {

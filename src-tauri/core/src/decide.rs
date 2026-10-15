@@ -4,7 +4,7 @@ use crate::keymap::Lang;
 use crate::layout::{decide_layout, split_tail};
 use crate::replace::apply_case;
 use crate::token::is_code_token;
-use crate::typo::best_fix;
+use crate::typo::fix_after;
 use crate::undo::ActionKind;
 use crate::word::{render, Key};
 
@@ -12,6 +12,7 @@ pub struct WordInput<'a> {
     pub keys: &'a [Key],
     pub lang: Lang,
     pub code_mode: bool,
+    pub prev: Option<&'a str>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -40,7 +41,7 @@ pub fn decide(input: &WordInput, dicts: &Dictionaries, cfg: &Config) -> Option<F
         }
     }
     if cfg.features.typos && !is_code_token(core, input.code_mode) && !(input.code_mode && input.lang == Lang::En) {
-        if let Some(text) = best_fix(core, input.lang, dicts) {
+        if let Some(text) = fix_after(core, input.prev, input.lang, dicts) {
             return fix(ActionKind::Typo, text + tail, None);
         }
     }
@@ -65,7 +66,7 @@ mod tests {
 
     fn run(text: &str, lang: Lang, cfg: &Config) -> Option<(ActionKind, String)> {
         let keys = keys_for(text, lang);
-        decide(&WordInput { keys: &keys, lang, code_mode: false }, dicts(), cfg).map(|f| (f.kind, f.text))
+        decide(&WordInput { keys: &keys, lang, code_mode: false, prev: None }, dicts(), cfg).map(|f| (f.kind, f.text))
     }
 
     #[test]
@@ -96,7 +97,7 @@ mod tests {
         let cfg = Config::default();
         for w in ["--watch", "~", "$HOME", "a=b"] {
             let keys = keys_for(w, Lang::En);
-            assert_eq!(decide(&WordInput { keys: &keys, lang: Lang::En, code_mode: true }, dicts(), &cfg), None, "{w}");
+            assert_eq!(decide(&WordInput { keys: &keys, lang: Lang::En, code_mode: true, prev: None }, dicts(), &cfg), None, "{w}");
         }
     }
 }

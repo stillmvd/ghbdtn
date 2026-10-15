@@ -2,7 +2,7 @@ use ghbdtn_core::config::Config;
 use ghbdtn_core::decide::{decide, WordInput};
 use ghbdtn_core::dict::Dictionaries;
 use ghbdtn_core::keymap::Lang;
-use ghbdtn_core::typo::adjacent;
+use ghbdtn_core::typo::{adjacent, fix_after};
 use ghbdtn_core::undo::ActionKind;
 use ghbdtn_core::word::keys_for;
 use std::time::Instant;
@@ -25,7 +25,7 @@ fn config() -> Config {
 
 fn run(text: &str, keys_lang: Lang, lang: Lang, code_mode: bool, dicts: &Dictionaries, cfg: &Config) -> Option<(ActionKind, String)> {
     let keys = keys_for(text, keys_lang);
-    decide(&WordInput { keys: &keys, lang, code_mode }, dicts, cfg).map(|f| (f.kind, f.text))
+    decide(&WordInput { keys: &keys, lang, code_mode, prev: None }, dicts, cfg).map(|f| (f.kind, f.text))
 }
 
 fn typo_variants(word: &str, lang: Lang) -> Vec<String> {
@@ -166,4 +166,69 @@ fn decide_is_fast() {
     let avg = t.elapsed() / sample.len() as u32;
     println!("decide avg {avg:?}");
     assert!(avg.as_millis() < 2 || cfg!(debug_assertions));
+}
+
+fn ctx_variants(word: &str) -> Vec<String> {
+    let c: Vec<char> = word.chars().collect();
+    if c.len() > 3 {
+        return typo_variants(word, Lang::Ru);
+    }
+    let mut out = Vec::new();
+    for i in 0..c.len() {
+        if let Some(r) = Lang::Ru.alphabet().chars().find(|&r| adjacent(c[i], r, Lang::Ru)) {
+            let mut v = c.clone();
+            v[i] = r;
+            out.push(v);
+        }
+        if i + 1 < c.len() && c[i] != c[i + 1] {
+            let mut v = c.clone();
+            v.swap(i, i + 1);
+            out.push(v);
+        }
+    }
+    out.into_iter().map(|v| v.into_iter().collect()).collect()
+}
+
+#[test]
+fn context_typos() {
+    let dicts = Dictionaries::load();
+    let pairs: Vec<(&str, &str)> = include_str!("ctx_pairs.txt").lines().filter_map(|l| l.split_once(' ')).collect();
+    let (mut total, mut short, mut changed) = (0, 0, 0);
+    let mut stats = [[0u32; 2]; 2];
+    let mut wrong_samples = Vec::new();
+    for (prev, w) in &pairs {
+        if w.chars().count() < 2 || w.contains('-') {
+            continue;
+        }
+        changed += fix_after(w, Some(prev), Lang::Ru, &dicts).is_some() as u32;
+        for v in ctx_variants(w) {
+            if dicts.seen(Lang::Ru, &v) {
+                continue;
+            }
+            total += 1;
+            short += (v.chars().count() <= 3) as u32;
+            for (i, p) in [None, Some(*prev)].into_iter().enumerate() {
+                match fix_after(&v, p, Lang::Ru, &dicts) {
+                    Some(out) if out == *w => stats[i][0] += 1,
+                    Some(out) => {
+                        stats[i][1] += 1;
+                        if i == 1 && wrong_samples.len() < 15 {
+                            wrong_samples.push(format!("{prev} {v}→{out} ({w})"));
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+    let pct = |n: u32| n as f64 * 100.0 / total as f64;
+    println!(
+        "Ru ctx of {total} (short {short}): alone right {:.1}% wrong {:.2}%, with prev right {:.1}% wrong {:.2}%, correct changed {changed} {wrong_samples:?}",
+        pct(stats[0][0]),
+        pct(stats[0][1]),
+        pct(stats[1][0]),
+        pct(stats[1][1])
+    );
+    assert_eq!(changed, 0, "context changed correct words");
+    assert!(stats[1][1] as f64 <= stats[0][1] as f64 * 1.2 + 5.0, "context adds wrong fixes");
 }
