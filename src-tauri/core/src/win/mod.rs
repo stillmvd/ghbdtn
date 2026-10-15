@@ -495,7 +495,8 @@ impl Worker {
         let fix = (status == Status::Working && !keys.is_empty() && !glued && (sep != Separator::Enter || enter_eaten))
             .then(|| decide(&WordInput { keys: &keys, lang, code_mode: mode == Mode::Code, prev: self.ctx.as_deref() }, &self.dicts, &cfg))
             .flatten();
-        let plain = |t: &str| (sep == Separator::Space && !glued && t.chars().all(|c| c.is_alphabetic() || c == '-')).then(|| t.to_string());
+        let word_like = |t: &str| t.chars().all(|c| c.is_alphabetic() || c == '-') || t.chars().all(|c| c.is_ascii_digit());
+        let plain = |t: &str| (sep == Separator::Space && !glued && word_like(t)).then(|| t.to_string());
         self.ctx = match &fix {
             Some(f) => plain(&f.text),
             None => plain(&render(&keys, lang)),

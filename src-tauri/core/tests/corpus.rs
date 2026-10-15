@@ -138,6 +138,42 @@ fn double_typos() {
 }
 
 #[test]
+fn moved_letter() {
+    let dicts = Dictionaries::load();
+    let cfg = config();
+    let (mut total, mut right, mut wrong) = (0, 0, 0);
+    let mut wrong_samples = Vec::new();
+    for w in top_words(Lang::Ru) {
+        let c: Vec<char> = w.chars().collect();
+        if c.len() < 6 || w.contains('-') {
+            continue;
+        }
+        let a = 1 + total % (c.len() - 3);
+        let mut v = c.clone();
+        let x = v.remove(a);
+        v.insert(a + 2, x);
+        let v: String = v.into_iter().collect();
+        if v == w || dicts.known(Lang::Ru, &v) {
+            continue;
+        }
+        total += 1;
+        match run(&v, Lang::Ru, Lang::Ru, false, &dicts, &cfg) {
+            Some((_, out)) if out == w => right += 1,
+            Some((_, out)) => {
+                wrong += 1;
+                if wrong_samples.len() < 15 {
+                    wrong_samples.push(format!("{v}→{out} ({w})"));
+                }
+            }
+            None => {}
+        }
+    }
+    let (r, x) = (right as f64 / total as f64, wrong as f64 / total as f64);
+    println!("Ru moved right {:.1}% wrong {:.2}% of {total} {wrong_samples:?}", r * 100.0, x * 100.0);
+    assert!(x <= 0.02, "moved letter wrong");
+}
+
+#[test]
 fn hard_set_untouched() {
     let dicts = Dictionaries::load();
     let cfg = config();

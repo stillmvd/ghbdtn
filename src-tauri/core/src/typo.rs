@@ -25,6 +25,15 @@ const REAL_MIN: u32 = 100;
 const PARTICLES: &[&str] = &["ну", "не", "но", "да", "мы", "вы", "ты", "он", "бы", "же", "ли", "по", "до", "из", "за", "то", "уж"];
 const FAR_SHORT: f32 = 1.2;
 const FAR_LONG: f32 = 1.6;
+const MOVED: f32 = 0.7;
+const MOVED_EDIT: f32 = 0.6;
+const AFTER_NUMBER: &[&str] = &[
+    "год", "года", "году", "лет", "раз", "раза", "рубль", "рубля", "рублей", "доллар", "доллара", "долларов", "евро",
+    "минута", "минуты", "минут", "час", "часа", "часов", "секунд", "секунды", "день", "дня", "дней", "неделя", "недели",
+    "недель", "месяц", "месяца", "месяцев", "тысяч", "тысячи", "человек", "процентов", "процента", "штук", "штуки",
+    "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря",
+    "years", "year", "days", "hours", "minutes", "seconds", "times", "people", "percent", "dollars",
+];
 
 fn position(c: char, lang: Lang) -> Option<(f32, f32)> {
     let (scan, _) = key_of(c, lang)?;
@@ -90,6 +99,16 @@ fn edits(word: &[char], lang: Lang) -> HashMap<String, f32> {
             add(v, if repeat { 0.5 } else { 0.6 });
         }
     }
+    for i in 0..n.saturating_sub(2) {
+        if word[i] != word[i + 1] && word[i + 1] != word[i + 2] {
+            let mut v = word.to_vec();
+            v[i..i + 3].rotate_left(1);
+            add(v, MOVED_EDIT);
+            let mut v = word.to_vec();
+            v[i..i + 3].rotate_right(1);
+            add(v, MOVED_EDIT);
+        }
+    }
     out
 }
 
@@ -97,7 +116,7 @@ struct Far<'a> {
     typed: &'a [char],
     extra: Vec<f32>,
     pos: HashMap<char, (f32, f32)>,
-    rows: [Vec<f32>; 3],
+    rows: [Vec<f32>; 4],
 }
 
 impl Far<'_> {
@@ -118,7 +137,7 @@ impl Far<'_> {
         }
         let mut prev_min = f32::INFINITY;
         for i in 0..=n {
-            let [p2, p1, cur] = &mut self.rows;
+            let [p3, p2, p1, cur] = &mut self.rows;
             cur.fill(f32::INFINITY);
             let lo = i.saturating_sub(BAND);
             let hi = (i + BAND).min(m);
@@ -151,6 +170,14 @@ impl Far<'_> {
                     if i > 1 && j > 1 && a == cand[j - 2] && typed[i - 2] == b && a != b {
                         v = v.min(p2[j - 2] + 0.5);
                     }
+                    if i > 2 && j > 2 {
+                        let (t, c) = (&typed[i - 3..i], &cand[j - 3..j]);
+                        let early = t[0] == c[2] && t[1] == c[0] && t[2] == c[1];
+                        let late = t[0] == c[1] && t[1] == c[2] && t[2] == c[0];
+                        if (early || late) && t[0] != t[1] && t[1] != t[2] {
+                            v = v.min(p3[j - 3] + MOVED);
+                        }
+                    }
                 }
                 cur[j] = v;
                 row_min = row_min.min(v);
@@ -161,7 +188,7 @@ impl Far<'_> {
             prev_min = row_min;
             self.rows.rotate_left(1);
         }
-        Some(self.rows[1][m]).filter(|&v| v <= limit)
+        Some(self.rows[2][m]).filter(|&v| v <= limit)
     }
 }
 
@@ -171,7 +198,7 @@ fn far_fix(typed: &str, chars: &[char], prev: Option<&str>, lang: Lang, dicts: &
     }
     let limit = if chars.len() >= LONG_WORD { FAR_LONG } else { FAR_SHORT };
     let pos = lang.alphabet().chars().filter_map(|c| position(c, lang).map(|p| (c, p))).collect();
-    let mut far = Far { typed: chars, extra: Vec::new(), pos, rows: [Vec::new(), Vec::new(), Vec::new()] };
+    let mut far = Far { typed: chars, extra: Vec::new(), pos, rows: Default::default() };
     far.extra = (0..chars.len())
         .map(|i| {
             let c = chars[i];
@@ -258,6 +285,10 @@ fn short_fix(typed: &str, chars: &[char], prev: Option<&str>, lang: Lang, dicts:
 
 fn by_context<'a>(prev: Option<&str>, cands: &[&'a str], lang: Lang, dicts: &Dictionaries) -> Option<&'a str> {
     let prev = prev?;
+    if prev.chars().all(|c| c.is_ascii_digit()) {
+        let mut after = cands.iter().filter(|c| AFTER_NUMBER.contains(c));
+        return after.next().filter(|_| after.next().is_none()).copied();
+    }
     let mut s: Vec<(u32, &str)> = cands.iter().map(|c| (dicts.bigram(lang, prev, c), *c)).collect();
     s.sort_by_key(|x| std::cmp::Reverse(x.0));
     let (top, best) = *s.first()?;
@@ -329,7 +360,7 @@ pub fn fix_after(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionari
         .map(|(cand, w)| ((dicts.freq(lang, &cand).max(1) as f32).ln() - 4.0 * w, cand))
         .collect();
     scored.sort_by(|a, b| b.0.total_cmp(&a.0));
-    if scored.is_empty() {
+    if !scored.iter().any(|(_, c)| solid(c, lang, dicts)) {
         return far_fix(typed, &chars, prev, lang, dicts).filter(|c| typed_freq == 0 || dicts.freq(lang, &c.to_lowercase()) >= OUTRANK * typed_freq);
     }
     let (best, _) = scored.first()?;
@@ -349,6 +380,17 @@ mod tests {
     fn dicts() -> &'static Dictionaries {
         static D: OnceLock<Dictionaries> = OnceLock::new();
         D.get_or_init(Dictionaries::load)
+    }
+
+    #[test]
+    fn moved_letter_and_context() {
+        let f = |w: &str, p| fix_after(w, p, Lang::Ru, dicts());
+        assert_eq!(f("смники", None).as_deref(), Some("снимки"));
+        assert_eq!(f("сметир", None).as_deref(), Some("смерти"));
+        assert_eq!(f("грода", Some("прошлого")).as_deref(), Some("года"));
+        assert_eq!(f("грода", Some("центр")).as_deref(), Some("города"));
+        assert_eq!(f("грода", None), None);
+        assert_eq!(f("грода", Some("2026")).as_deref(), Some("года"));
     }
 
     #[test]
