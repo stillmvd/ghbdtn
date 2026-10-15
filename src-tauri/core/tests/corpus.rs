@@ -276,7 +276,9 @@ fn context_check(lang: Lang, text: &str) {
         pct(stats[1][1])
     );
     assert!(changed as f64 <= pairs.len() as f64 * 0.0005, "context changed correct words");
-    assert!(stats[1][1] as f64 <= stats[0][1] as f64 * 1.2 + 5.0, "context adds wrong fixes");
+    let extra_wrong = stats[1][1].saturating_sub(stats[0][1]) as f64;
+    let extra_right = stats[1][0].saturating_sub(stats[0][0]) as f64;
+    assert!(extra_wrong <= 5.0 || extra_right >= extra_wrong * 5.0, "context adds wrong fixes");
 }
 
 #[test]

@@ -1,5 +1,6 @@
 use crate::dict::Dictionaries;
 use crate::keymap::{key_of, Lang};
+use crate::layout::short_word;
 use crate::replace::apply_case;
 use std::collections::HashMap;
 
@@ -19,6 +20,8 @@ const CTX_MIN: u32 = 3;
 const CTX_RATIO: u32 = 10;
 const EN_CTX_RATIO: u32 = 20;
 const WEAK_FREQ: u32 = 1000;
+const WEAK3_FREQ: u32 = 300;
+const SHORT_GAP: f32 = 2.3;
 const WEAK_RATIO: u32 = 300;
 const SOLID_FREQ: u32 = 100;
 const REAL_MIN: u32 = 100;
@@ -37,8 +40,10 @@ const VERB_ENDS: &[&str] = &[
     "вший", "вшая", "вшие", "вши",
 ];
 const PREFIXED_MIN: usize = 5;
-const LEAD: f32 = 1.0;
-const AGREE_RATIO: u32 = 3;
+const JOINT_LEAD: f32 = 1.5;
+const SPLIT_MIN: usize = 5;
+const SPLIT_LONG_LEFT: usize = 6;
+const SPLIT_OVER: u32 = 3;
 const AFTER_NUMBER: &[&str] = &[
     "год", "года", "году", "лет", "раз", "раза", "рубль", "рубля", "рублей", "доллар", "доллара", "долларов", "евро",
     "минута", "минуты", "минут", "час", "часа", "часов", "секунд", "секунды", "день", "дня", "дней", "неделя", "недели",
@@ -257,11 +262,14 @@ fn short_fix(typed: &str, chars: &[char], prev: Option<&str>, lang: Lang, dicts:
     if lang != Lang::Ru || !(PAIR_LEN..=SHORT_LEN).contains(&chars.len()) || typed.chars().any(char::is_uppercase) {
         return None;
     }
-    let weak = chars.len() == PAIR_LEN && !dicts.certain(lang, typed) && dicts.freq(lang, typed) < WEAK_FREQ;
-    if !chars.iter().all(|&c| lang.owns_letter(c)) || (dicts.seen(lang, typed) && !weak) {
+    let typed_freq = dicts.freq(lang, typed);
+    let rare = !dicts.certain(lang, typed);
+    let weak = rare && chars.len() == PAIR_LEN && typed_freq < WEAK_FREQ;
+    let only_drop = rare && chars.len() == SHORT_LEN && typed_freq < WEAK3_FREQ && dicts.seen(lang, typed);
+    if !chars.iter().all(|&c| lang.owns_letter(c)) || (dicts.seen(lang, typed) && !weak && !only_drop) {
         return None;
     }
-    let mut cands: Vec<String> = Vec::new();
+    let (mut cands, mut drops): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
     for i in 0..chars.len() {
         for r in lang.alphabet().chars().filter(|&r| adjacent(chars[i], r, lang)) {
             let mut v = chars.to_vec();
@@ -273,8 +281,21 @@ fn short_fix(typed: &str, chars: &[char], prev: Option<&str>, lang: Lang, dicts:
             v.swap(i, i + 1);
             cands.push(v.into_iter().collect());
         }
+        let fat = |j: Option<usize>| j.and_then(|j| chars.get(j)).is_some_and(|&n| n == chars[i] || adjacent(n, chars[i], lang));
+        if chars.len() == SHORT_LEN && (fat(i.checked_sub(1)) || fat(Some(i + 1))) {
+            let mut v = chars.to_vec();
+            v.remove(i);
+            drops.push(v.into_iter().collect());
+        }
     }
-    let mut scored: Vec<(u32, String)> = cands.into_iter().filter(|c| !c.contains('ё') || dicts.certain(lang, c)).map(|c| (dicts.freq(lang, &c), c)).filter(|(f, _)| *f >= SHORT_MIN_FREQ).collect();
+    let floor = SHORT_MIN_FREQ.max(if only_drop { WEAK_RATIO * typed_freq } else { 0 });
+    let rank = |list: Vec<String>| -> Vec<(u32, String)> {
+        list.into_iter().filter(|c| !c.contains('ё') || dicts.certain(lang, c)).map(|c| (dicts.freq(lang, &c), c)).filter(|(f, _)| *f >= floor).collect()
+    };
+    let mut scored = if only_drop { Vec::new() } else { rank(cands) };
+    if scored.is_empty() {
+        scored = rank(drops);
+    }
     scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
     scored.dedup_by(|a, b| a.1 == b.1);
     if chars.len() == PAIR_LEN {
@@ -291,7 +312,7 @@ fn short_fix(typed: &str, chars: &[char], prev: Option<&str>, lang: Lang, dicts:
         .map(String::from);
     }
     let (best, _) = scored.first()?;
-    let close: Vec<&str> = scored.iter().take_while(|(f, _)| (*best as f32 / *f as f32).ln() < GAP).map(|(_, c)| c.as_str()).collect();
+    let close: Vec<&str> = scored.iter().take_while(|(f, _)| (*best as f32 / *f as f32).ln() < SHORT_GAP).map(|(_, c)| c.as_str()).collect();
     pick(prev, &close, lang, dicts).map(String::from)
 }
 
@@ -314,6 +335,34 @@ fn pick<'a>(prev: Option<&str>, close: &[&'a str], lang: Lang, dicts: &Dictionar
         [] => None,
         [one] => Some(one),
         _ => by_context(prev, close, lang, dicts),
+    }
+}
+
+fn split_fix(chars: &[char], lang: Lang, dicts: &Dictionaries) -> Option<String> {
+    if chars.len() < SPLIT_MIN {
+        return None;
+    }
+    let whole: String = chars.iter().collect();
+    let whole_freq = dicts.freq(lang, &whole);
+    let long = |w: &str| w.chars().count() >= 3 && dicts.certain(lang, w) && solid(w, lang, dicts);
+    let mut found: Vec<(u32, String)> = Vec::new();
+    for i in 1..chars.len() {
+        let (l, r): (String, String) = (chars[..i].iter().collect(), chars[i..].iter().collect());
+        let (ls, rs) = (short_word(&l, lang), short_word(&r, lang));
+        if !(ls || long(&l)) || !(rs || long(&r)) || (ls && rs) {
+            continue;
+        }
+        let ctx = dicts.bigram(lang, &l, &r);
+        let bare_ok = rs && i >= SPLIT_LONG_LEFT;
+        if (ctx >= CTX_MIN || bare_ok) && ctx >= SPLIT_OVER.saturating_mul(whole_freq) {
+            found.push((ctx, format!("{l} {r}")));
+        }
+    }
+    found.sort_by_key(|x| std::cmp::Reverse(x.0));
+    match found.as_slice() {
+        [one] => Some(one.1.clone()),
+        [a, b, ..] if a.0 >= CTX_MIN && a.0 >= CTX_RATIO * b.0.max(1) => Some(a.1.clone()),
+        _ => None,
     }
 }
 
@@ -360,6 +409,11 @@ pub fn fix_after(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionari
     if !chars.iter().all(|&c| lang.owns_letter(c) || c == '-') {
         return None;
     }
+    if dicts.known(lang, &lower) && !dicts.certain(lang, &lower) {
+        if let Some(split) = split_fix(&chars, lang, dicts) {
+            return Some(apply_case(typed, &split));
+        }
+    }
     if dicts.known(lang, typed) {
         return real_word_fix(typed, &chars, prev, lang, dicts);
     }
@@ -385,15 +439,27 @@ pub fn fix_after(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionari
         .collect();
     scored.sort_by(|a, b| b.0.total_cmp(&a.0));
     if !scored.iter().any(|(_, c)| solid(c, lang, dicts)) {
+        if let Some(split) = split_fix(&chars, lang, dicts) {
+            return Some(apply_case(typed, &split));
+        }
         return far_fix(typed, &chars, prev, lang, dicts).filter(|c| typed_freq == 0 || dicts.freq(lang, &c.to_lowercase()) >= OUTRANK * typed_freq);
     }
     let (best, _) = scored.first()?;
     let close: Vec<&str> = scored.iter().take_while(|(s, _)| best - s < GAP).map(|(_, c)| c.as_str()).collect();
     let agree = || {
-        let (p, (_, top), (second_score, second)) = (prev?, &scored[0], scored.get(1)?);
-        let ctx = dicts.bigram(lang, p, top);
-        let agrees = ctx >= CTX_MIN && ctx >= AGREE_RATIO * dicts.bigram(lang, p, second).max(1);
-        (lang == Lang::Ru && best - second_score >= LEAD && agrees).then_some(top.as_str())
+        let p = prev.filter(|_| lang == Lang::Ru)?;
+        let mut joint: Vec<(f32, u32, &str)> = scored
+            .iter()
+            .take_while(|(s, _)| best - s < GAP)
+            .map(|(s, c)| {
+                let ctx = dicts.bigram(lang, p, c);
+                (s + (ctx as f32 + 1.0).ln(), ctx, c.as_str())
+            })
+            .collect();
+        joint.sort_by(|a, b| b.0.total_cmp(&a.0));
+        let (top, ctx, word) = joint[0];
+        let second = joint.get(1).map_or(f32::NEG_INFINITY, |x| x.0);
+        (ctx >= CTX_MIN && top - second >= JOINT_LEAD).then_some(word)
     };
     let cand = pick(prev, &close, lang, dicts).or_else(agree).filter(|c| solid(c, lang, dicts))?;
     if typed_freq > 0 && dicts.freq(lang, cand) < OUTRANK * typed_freq {
@@ -425,6 +491,19 @@ mod tests {
         assert_eq!(f("ссказать", None).as_deref(), Some("сказать"));
         assert_eq!(f("сгенерирован", Some("код")), None);
         assert_eq!(f("поменяд", Some("он")).as_deref(), Some("поменял"));
+        assert_eq!(f("знаеи", Some("не")).as_deref(), Some("знает"));
+        assert_eq!(f("знаеи", None), None);
+        assert_eq!(f("исправляетсяна", None).as_deref(), Some("исправляется на"));
+        assert_eq!(f("незнаю", None).as_deref(), Some("не знаю"));
+        assert_eq!(f("вобщем", None).as_deref(), Some("в общем"));
+        assert_eq!(f("Незнаю", None).as_deref(), Some("Не знаю"));
+        assert_eq!(fix_after("ofthe", None, Lang::En, dicts()).as_deref(), Some("of the"));
+        assert_eq!(f("сколько", None), None);
+        assert_eq!(f("иам", None).as_deref(), Some("там"));
+        for w in ["iphone", "ebay", "imac", "ipad", "awesome", "outfit"] {
+            assert_eq!(fix_after(w, None, Lang::En, dicts()), None, "{w}");
+        }
+        assert_eq!(f("нго", None).as_deref(), Some("но"));
     }
 
     #[test]

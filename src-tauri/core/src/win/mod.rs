@@ -498,7 +498,7 @@ impl Worker {
         let word_like = |t: &str| t.chars().all(|c| c.is_alphabetic() || c == '-') || t.chars().all(|c| c.is_ascii_digit());
         let plain = |t: &str| (sep == Separator::Space && !glued && word_like(t)).then(|| t.to_string());
         self.ctx = match &fix {
-            Some(f) => plain(&f.text),
+            Some(f) => plain(f.text.rsplit(' ').next().unwrap_or_default()),
             None => plain(&render(&keys, lang)),
         };
         let sep_typed = sep.text(lang);

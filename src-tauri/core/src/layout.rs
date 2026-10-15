@@ -37,6 +37,11 @@ fn acceptable(core: &str, lang: Lang, dicts: &Dictionaries) -> bool {
 }
 
 pub fn decide_layout(keys: &[Key], lang: Lang, dicts: &Dictionaries) -> Option<String> {
+    layout_after(keys, lang, None, dicts)
+}
+
+pub fn layout_after(keys: &[Key], lang: Lang, prev: Option<&str>, dicts: &Dictionaries) -> Option<String> {
+    let prev_alt = prev.and_then(|p| short_alongside(&keys_for(p, lang), lang));
     let typed = render(keys, lang);
     let (typed_core, _) = split_tail(&typed, lang);
     if typed_core.is_empty() {
@@ -60,6 +65,10 @@ pub fn decide_layout(keys: &[Key], lang: Lang, dicts: &Dictionaries) -> Option<S
         (core.clone() + &render(tail, lang), core)
     };
     let alt_freq = dicts.freq(alt, &core);
+    let lower = typed_core.to_lowercase();
+    if prev_alt.is_some_and(|p| !dicts.known(lang, &lower) && dicts.bigram(alt, &p, &core.to_lowercase()) > 0) {
+        return Some(text);
+    }
     if dicts.seen(lang, typed_core) {
         let rare_form = dicts.freq(lang, typed_core) == 0 && alt_freq >= OVERRIDE_FREQ;
         if !rare_form {
@@ -117,7 +126,7 @@ pub fn acronym(keys: &[Key], lang: Lang, dicts: &Dictionaries) -> Option<String>
         .then(|| alt + &render(tail, lang))
 }
 
-fn short_word(word: &str, lang: Lang) -> bool {
+pub(crate) fn short_word(word: &str, lang: Lang) -> bool {
     let list = match lang {
         Lang::Ru => SHORT_RU,
         Lang::En => SHORT_EN,
@@ -186,6 +195,14 @@ mod tests {
         assert_eq!(s("с", Lang::Ru), None);
         assert_eq!(s("ш", Lang::Ru).as_deref(), Some("i"));
         assert_eq!(s("ghb", Lang::En), None);
+    }
+
+    #[test]
+    fn short_word_before_sets_layout() {
+        let f = |t: &str, prev| layout_after(&keys_for(t, Lang::En), Lang::En, prev, dicts());
+        assert_eq!(f("botn", Some("yt")).as_deref(), Some("ищет"));
+        assert_eq!(f("both", Some("yt")), None);
+        assert_eq!(f("botn", Some("it")), None);
     }
 
     #[test]
