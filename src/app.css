@@ -1,0 +1,24 @@
+@import "kockers-ds/css/tokens.css";
+@import "kockers-ds/css/kockers.css";
+
+:root {
+  --gb: #c6ec5a;
+  --gb-ink: #1a2400;
+  --gb-soft: color-mix(in srgb, var(--gb) 20%, transparent);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) { --gb: #4f7a00; --gb-ink: #ffffff; }
+}
+:root[data-theme="light"] { --gb: #4f7a00; --gb-ink: #ffffff; }
+
+html, body, #root { height: 100%; }
+body { font-variant-numeric: tabular-nums; }
+.gb-ic { display: block; flex: none; width: 16px; height: 16px; }
+.gb-mk { flex: none; display: block; width: 24px; height: 24px; }
+.gb-dis { opacity: var(--opacity-disabled); }
+.gb-ar { color: var(--dim); }
+.gb-mono { font-family: var(--font-mono); font-size: 12.5px; }
+.gb-x { flex: none; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--dim); cursor: pointer; }
+.gb-x:hover { background: var(--hover-strong); color: var(--fg); }
+.gb-x .gb-ic { width: 14px; height: 14px; }
+.t-tg:focus-visible, .gb-x:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
