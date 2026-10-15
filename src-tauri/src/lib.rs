@@ -6,6 +6,7 @@ mod tray;
 use crossbeam_channel::Sender;
 use ghbdtn_core::config::{Config, ConfigError, Mode};
 use ghbdtn_core::keymap::Lang;
+use ghbdtn_core::words;
 use ghbdtn_core::win::{hook::parse_hotkey, lang, CoreEvent, Engine, SilentReason, Status};
 use serde::Serialize;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -33,6 +34,7 @@ struct Shared {
     hints: Sender<overlay::Hint>,
     journal: journal::Journal,
     ru: std::sync::atomic::AtomicBool,
+    words: Mutex<()>,
 }
 
 type S = Arc<Shared>;
@@ -165,6 +167,49 @@ fn clear_never(app: AppHandle, s: State<S>) -> Result<Config, Vec<ConfigError>> 
     let mut cfg = s.engine.config();
     cfg.never.clear();
     save(&app, &s, cfg)
+}
+
+fn edit_words(s: &Shared, edit: impl FnOnce(&str) -> Result<String, String>) -> Result<Vec<String>, String> {
+    let _lock = s.words.lock().unwrap();
+    let path = Config::words_path();
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("не читается words.txt: {e}")),
+    };
+    let next = edit(&text)?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let tmp = path.with_extension("txt.tmp");
+    std::fs::write(&tmp, &next).and_then(|_| std::fs::rename(&tmp, &path)).map_err(|e| e.to_string())?;
+    s.engine.reload_words(next.clone());
+    Ok(words::list(&next))
+}
+
+#[tauri::command]
+fn get_words() -> Result<Vec<String>, String> {
+    match std::fs::read_to_string(Config::words_path()) {
+        Ok(t) => Ok(words::list(&t)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("не читается words.txt: {e}")),
+    }
+}
+
+#[tauri::command]
+fn add_word(s: State<S>, word: String) -> Result<Vec<String>, String> {
+    let word = words::normalize(&word)?;
+    edit_words(&s, |text| {
+        if words::list(text).contains(&word) {
+            return Err(format!("«{word}» уже в словаре"));
+        }
+        Ok(words::add(text, &word))
+    })
+}
+
+#[tauri::command]
+fn remove_word(s: State<S>, word: String) -> Result<Vec<String>, String> {
+    edit_words(&s, |text| Ok(words::remove(text, &word)))
 }
 
 #[tauri::command]
@@ -361,6 +406,9 @@ pub fn run() {
             set_config,
             remove_never,
             clear_never,
+            get_words,
+            add_word,
+            remove_word,
             set_autostart,
             list_processes,
             about,
@@ -381,6 +429,7 @@ pub fn run() {
                 hints: overlay::start(handle.clone()),
                 journal: journal::Journal::new(),
                 ru: std::sync::atomic::AtomicBool::new(true),
+                words: Mutex::new(()),
             });
             app.manage(shared.clone());
 

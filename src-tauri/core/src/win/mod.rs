@@ -16,8 +16,9 @@ use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender};
 use hook::{HookEvent, RawKey, ALLOWED, ARMED_UNDO, ENABLED, HOLD, PENDING};
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::SeqCst;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
@@ -56,7 +57,11 @@ pub enum CoreEvent {
 pub struct Engine {
     config: Arc<ArcSwap<Config>>,
     control: Sender<HookEvent>,
+    fresh: Fresh,
+    words_gen: Arc<AtomicU64>,
 }
+
+type Fresh = Arc<Mutex<Option<Dictionaries>>>;
 
 impl Engine {
     pub fn start(path: PathBuf, events: Sender<CoreEvent>) -> Engine {
@@ -66,11 +71,27 @@ impl Engine {
         hook::run(tx.clone());
         context::run(tx.clone());
         let shared = config.clone();
+        let fresh = Fresh::default();
+        let slot = fresh.clone();
         std::thread::Builder::new()
             .name("ghbdtn-engine".into())
-            .spawn(move || Worker::new(shared, path, events).run(rx))
+            .spawn(move || Worker::new(shared, path, events, slot).run(rx))
             .expect("engine thread");
-        Engine { config, control: tx }
+        Engine { config, control: tx, fresh, words_gen: Arc::default() }
+    }
+
+    pub fn reload_words(&self, text: String) {
+        let gen = self.words_gen.fetch_add(1, SeqCst) + 1;
+        let (current, fresh, control) = (self.words_gen.clone(), self.fresh.clone(), self.control.clone());
+        let _ = std::thread::Builder::new().name("ghbdtn-words".into()).spawn(move || {
+            let mut d = Dictionaries::load();
+            d.add_user_words(&text);
+            let mut slot = fresh.lock().unwrap();
+            if current.load(SeqCst) == gen {
+                *slot = Some(d);
+                let _ = control.try_send(HookEvent::Words);
+            }
+        });
     }
 
     pub fn config(&self) -> Config {
@@ -107,6 +128,7 @@ struct Worker {
     path: PathBuf,
     events: Sender<CoreEvent>,
     dicts: Dictionaries,
+    fresh: Fresh,
     extra_for: Option<Arc<Config>>,
     word: Word,
     word_lang: Option<Lang>,
@@ -141,7 +163,7 @@ fn is_modifier(vk: VIRTUAL_KEY) -> bool {
 }
 
 impl Worker {
-    fn new(config: Arc<ArcSwap<Config>>, path: PathBuf, events: Sender<CoreEvent>) -> Worker {
+    fn new(config: Arc<ArcSwap<Config>>, path: PathBuf, events: Sender<CoreEvent>, fresh: Fresh) -> Worker {
         Worker {
             config,
             path: path.clone(),
@@ -153,6 +175,7 @@ impl Worker {
                 }
                 d
             },
+            fresh,
             extra_for: None,
             word: Word::default(),
             word_lang: None,
@@ -291,6 +314,7 @@ impl Worker {
             };
             match ev {
                 HookEvent::Foreign | HookEvent::Click => self.reset(),
+                HookEvent::Words => self.take_words(),
                 HookEvent::Focus => {
                     self.reset();
                     self.evaluate();
@@ -308,7 +332,15 @@ impl Worker {
         }
     }
 
+    fn take_words(&mut self) {
+        if let Some(d) = self.fresh.lock().unwrap().take() {
+            self.dicts = d;
+            self.extra_for = None;
+        }
+    }
+
     fn tick(&mut self) {
+        self.take_words();
         if !self.word.is_empty() && self.last_key.elapsed() > IDLE_RESET {
             self.reset();
         }

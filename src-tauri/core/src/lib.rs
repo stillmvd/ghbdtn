@@ -8,6 +8,7 @@ pub mod token;
 pub mod typo;
 pub mod undo;
 pub mod word;
+pub mod words;
 
 #[cfg(windows)]
 pub mod win;

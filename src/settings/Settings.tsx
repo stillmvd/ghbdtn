@@ -2,15 +2,16 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { checkNow, installNow, UpdateBadge, UpdateToast, useShip } from "@stillmvd/tauri-ship";
-import { api, errorsOf, type About, type Config, type ConfigError, type Proc } from "../api";
+import { api, errorsOf, plural, type About, type Config, type ConfigError, type Proc } from "../api";
 import { Icon, Kbd, Mark, Toggle } from "../Icon";
 import "./settings.css";
 
-type Sec = "main" | "repl" | "never" | "proc" | "keys" | "about";
+type Sec = "main" | "repl" | "never" | "dict" | "proc" | "keys" | "about";
 const NAV: [Sec, string, string][] = [
   ["main", "Основное", "settings"],
   ["repl", "Замены", "repl"],
   ["never", "Не трогать", "eyeOff"],
+  ["dict", "Словарь", "book"],
   ["proc", "Исключения", "app"],
   ["keys", "Клавиши", "keyboard"],
   ["about", "О программе", "info"],
@@ -27,10 +28,10 @@ function Row({ title, sub, children }: { title: string; sub?: string; children: 
   );
 }
 
-function Group({ label, extra, note, children }: { label: string; extra?: ReactNode; note?: string; children: ReactNode }) {
+function Group({ label, extra, note, children }: { label?: string; extra?: ReactNode; note?: string; children: ReactNode }) {
   return (
     <div className="st-grp">
-      <div className="st-grp-h"><span className="mono-label st-lbl">{label}</span>{extra}</div>
+      <div className="st-grp-h">{label && <span className="mono-label st-lbl">{label}</span>}{extra}</div>
       {note && <p className="st-note">{note}</p>}
       {children}
     </div>
@@ -123,6 +124,40 @@ function Never({ cfg, setCfg }: Ctx) {
         </div>
       )}
     </Group>
+  );
+}
+
+function Dict() {
+  const [words, setWords] = useState<string[] | null>(null);
+  const [q, setQ] = useState("");
+  const [err, setErr] = useState("");
+  useEffect(() => { api.getWords().then(setWords).catch((e) => setErr(String(e))); }, []);
+  const run = (p: Promise<string[]>) => p.then((w) => { setWords(w); setErr(""); }, (e) => setErr(String(e)));
+  const needle = q.trim().toLowerCase();
+  const all = words ?? [];
+  const shown = needle ? all.filter((w) => w.includes(needle)) : all;
+  const n = needle ? `${shown.length} из ${all.length}` : `${all.length} ${plural(all.length, "слово", "слова", "слов")}`;
+  return (
+    <>
+      <div className="st-add-wrap">
+        <form className="st-add st-find" onSubmit={(e) => { e.preventDefault(); if (needle) run(api.addWord(needle)); }}>
+          <label className={`t-field${err ? " err" : ""}`}><Icon name="search" />
+            <input id="dict-find" value={q} onChange={(e) => { setQ(e.target.value); setErr(""); }} placeholder="Найти слово" aria-label="Найти слово" /></label>
+          <button type="submit" className="t-btn p" disabled={!needle || all.includes(needle)}><Icon name="plus" />Добавить</button>
+        </form>
+        {err && <p className="t-field-msg err">{err}</p>}
+      </div>
+      {words && (
+        <Group extra={<span className="n">{n}</span>}>
+          <div className="st-words">
+            {shown.map((w) => (
+              <span key={w}><b>{w}</b>
+                <button type="button" className="gb-x" aria-label={`Удалить ${w}`} onClick={() => run(api.removeWord(w))}><Icon name="x" /></button></span>
+            ))}
+          </div>
+        </Group>
+      )}
+    </>
   );
 }
 
@@ -275,7 +310,7 @@ export function Settings() {
 
   const ctx: Ctx | null = cfg && { cfg, save, errors, setCfg };
   const general = errors.filter((e) => !e.field.startsWith("replacements") && !e.field.startsWith("hotkeys"));
-  const Body = { main: Main, repl: Repl, never: Never, proc: Procs, keys: Keys, about: AboutSec }[sec];
+  const Body = { main: Main, repl: Repl, never: Never, dict: Dict, proc: Procs, keys: Keys, about: AboutSec }[sec];
 
   return (
     <div className="st">

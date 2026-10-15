@@ -26,3 +26,11 @@
 .st-list .v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .st-list .src { color: var(--dim); font-size: 12px; }
 .st .t-empty { padding-top: 24px; }
+.st-find .t-field { gap: 10px; }
+.st-find .t-field .gb-ic { color: var(--dim); }
+.st-words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: 8px; }
+.st-words > span { display: flex; align-items: center; gap: 6px; min-width: 0; height: 32px; padding: 0 4px 0 12px; border-radius: 10px; white-space: nowrap; }
+.st-words > span:hover, .st-words > span:focus-within { background: var(--hover); }
+.st-words b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 500; }
+.st-words .gb-x { width: 24px; height: 24px; opacity: 0; }
+.st-words > span:hover .gb-x, .st-words > span:focus-within .gb-x { opacity: 1; }

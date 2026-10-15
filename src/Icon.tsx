@@ -8,6 +8,9 @@ const PATHS: Record<string, string> = {
   app: "M5.5 4h13A2.5 2.5 0 0 1 21 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5v-11A2.5 2.5 0 0 1 5.5 4ZM3 9h18",
   keyboard: "M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2ZM6 9h.01M10 9h.01M14 9h.01M18 9h.01M8 13h.01M12 13h.01M16 13h.01M7 16h10",
   info: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM12 11v5.5M12 7.6v.01",
+  book: "M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20",
+  search: "M17.5 11a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0ZM16 16l4 4",
+  restart: "M20 12a8 8 0 1 1-2.3-5.7M20 4v4.5h-4.5",
 };
 
 export function Icon({ name, className = "" }: { name: keyof typeof PATHS | string; className?: string }) {

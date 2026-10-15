@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { installNow, useShip } from "@stillmvd/tauri-ship";
 import { api, plural, type Config, type FlyoutState } from "../api";
 import { Icon, Mark, Toggle } from "../Icon";
 import "./flyout.css";
@@ -23,6 +24,8 @@ function statusText(s: FlyoutState) {
 export function Flyout() {
   const [s, setS] = useState<FlyoutState | null>(null);
   const card = useRef<HTMLDivElement>(null);
+  const { status } = useShip();
+  const ready = status?.phase === "ready" || status?.phase === "installing";
   const load = useCallback(() => { api.flyoutState().then(setS).catch(() => {}); }, []);
 
   useEffect(() => {
@@ -81,10 +84,20 @@ export function Flyout() {
             <Toggle on={appOff} label={`Не трогать ${s.app.name}`} onChange={toggleApp} />
           </div>
         )}
-        <div className="fl-foot">
-          <span>{s.count} {plural(s.count, "исправление", "исправления", "исправлений")} сегодня</span>
-          <button type="button" className="t-btn s32 g" onClick={() => api.openSettings()}><Icon name="settings" />Настройки</button>
-        </div>
+        {ready ? (
+          <div className="fl-foot">
+            <span className="fl-up">Готова версия {status?.available?.version}</span>
+            <span className="fl-btns">
+              <button type="button" className="t-btn s32 p" disabled={status?.phase === "installing"} onClick={() => installNow()}><Icon name="restart" />Перезапустить</button>
+              <button type="button" className="t-btn s32 g ib" aria-label="Настройки" title="Настройки" onClick={() => api.openSettings()}><Icon name="settings" /></button>
+            </span>
+          </div>
+        ) : (
+          <div className="fl-foot">
+            <span>{s.count} {plural(s.count, "исправление", "исправления", "исправлений")} сегодня</span>
+            <button type="button" className="t-btn s32 g" onClick={() => api.openSettings()}><Icon name="settings" />Настройки</button>
+          </div>
+        )}
       </div>
     </div>
   );

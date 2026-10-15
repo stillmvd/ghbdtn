@@ -35,6 +35,7 @@ pub enum HookEvent {
     Foreign,
     Click,
     Focus,
+    Words,
 }
 
 pub static HOLD: AtomicBool = AtomicBool::new(false);
