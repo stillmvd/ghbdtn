@@ -148,7 +148,7 @@ fn hard_set_untouched() {
     for w in en {
         assert_eq!(run(w, Lang::En, Lang::En, true, &dicts, &cfg), None, "code {w}");
     }
-    for w in ["я", "в", "и", "ок", "ну", "щас", "чё", "блин"] {
+    for w in ["я", "в", "и", "ок", "ну", "щас", "чё", "блин", "жк", "пк", "вк", "тг", "мб", "хз", "пж", "спс", "мск", "спб", "лол", "кек", "ыы", "ммм"] {
         assert_eq!(run(w, Lang::Ru, Lang::Ru, false, &dicts, &cfg), None, "{w}");
     }
 }

@@ -11,6 +11,8 @@ const MIN_LEN: usize = 4;
 const OUTRANK: u32 = 5;
 const NEAR_WEIGHT: f32 = 0.5;
 const FAR_MIN_LEN: usize = 6;
+const SHORT_MIN_FREQ: u32 = 20_000;
+const SHORT_LEN: usize = 3;
 const FAR_SHORT: f32 = 1.2;
 const FAR_LONG: f32 = 1.6;
 
@@ -104,6 +106,7 @@ impl Far<'_> {
             r.clear();
             r.resize(m + 1, f32::INFINITY);
         }
+        let mut prev_min = f32::INFINITY;
         for i in 0..=n {
             let [p2, p1, cur] = &mut self.rows;
             cur.fill(f32::INFINITY);
@@ -142,9 +145,10 @@ impl Far<'_> {
                 cur[j] = v;
                 row_min = row_min.min(v);
             }
-            if row_min > limit {
+            if row_min > limit && prev_min > limit {
                 return None;
             }
+            prev_min = row_min;
             self.rows.rotate_left(1);
         }
         Some(self.rows[1][m]).filter(|&v| v <= limit)
@@ -201,10 +205,43 @@ pub fn near_freq(typed: &str, lang: Lang, dicts: &Dictionaries) -> Option<u32> {
         .max()
 }
 
+fn short_fix(typed: &str, chars: &[char], lang: Lang, dicts: &Dictionaries) -> Option<String> {
+    if lang != Lang::Ru || chars.len() != SHORT_LEN || typed.chars().any(char::is_uppercase) {
+        return None;
+    }
+    if !chars.iter().all(|&c| lang.owns_letter(c)) || dicts.seen(lang, typed) {
+        return None;
+    }
+    let mut cands: Vec<String> = Vec::new();
+    for i in 0..chars.len() {
+        for r in lang.alphabet().chars().filter(|&r| adjacent(chars[i], r, lang)) {
+            let mut v = chars.to_vec();
+            v[i] = r;
+            cands.push(v.into_iter().collect());
+        }
+        if i + 1 < chars.len() && chars[i] != chars[i + 1] {
+            let mut v = chars.to_vec();
+            v.swap(i, i + 1);
+            cands.push(v.into_iter().collect());
+        }
+    }
+    let mut scored: Vec<(u32, String)> = cands.into_iter().filter(|c| !c.contains('ё') || dicts.certain(lang, c)).map(|c| (dicts.freq(lang, &c), c)).filter(|(f, _)| *f >= SHORT_MIN_FREQ).collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    scored.dedup_by(|a, b| a.1 == b.1);
+    let (best, cand) = scored.first()?;
+    if scored.get(1).is_some_and(|(second, _)| (*best as f32 / *second as f32).ln() < GAP) {
+        return None;
+    }
+    Some(cand.clone())
+}
+
 pub fn best_fix(typed: &str, lang: Lang, dicts: &Dictionaries) -> Option<String> {
     let lower = typed.to_lowercase();
     let chars: Vec<char> = lower.chars().collect();
-    if chars.len() < MIN_LEN || !chars.iter().all(|&c| lang.owns_letter(c) || c == '-') || dicts.known(lang, typed) {
+    if chars.len() < MIN_LEN {
+        return short_fix(typed, &chars, lang, dicts);
+    }
+    if !chars.iter().all(|&c| lang.owns_letter(c) || c == '-') || dicts.known(lang, typed) {
         return None;
     }
     let limit = if chars.len() >= LONG_WORD { LONG_MAX_WEIGHT } else { MAX_WEIGHT };
@@ -219,7 +256,7 @@ pub fn best_fix(typed: &str, lang: Lang, dicts: &Dictionaries) -> Option<String>
         .collect();
     scored.sort_by(|a, b| b.0.total_cmp(&a.0));
     if scored.is_empty() {
-        return far_fix(typed, &chars, lang, dicts);
+        return far_fix(typed, &chars, lang, dicts).filter(|c| typed_freq == 0 || dicts.freq(lang, &c.to_lowercase()) >= OUTRANK * typed_freq);
     }
     let (best, cand) = scored.first()?;
     if scored.get(1).is_some_and(|(second, _)| best - second < GAP) {
@@ -258,6 +295,16 @@ mod tests {
         assert_eq!(best_fix("приверяю", Lang::Ru, dicts()).as_deref(), Some("проверяю"));
         assert_eq!(best_fix("Првиет", Lang::Ru, dicts()).as_deref(), Some("Привет"));
         assert_eq!(best_fix("hwllo", Lang::En, dicts()).as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn fixes_three_letter_words_only_when_clear() {
+        assert_eq!(best_fix("чтл", Lang::Ru, dicts()).as_deref(), Some("что"));
+        assert_eq!(best_fix("кка", Lang::Ru, dicts()).as_deref(), Some("как"));
+        assert_eq!(best_fix("нкт", Lang::Ru, dicts()).as_deref(), Some("нет"));
+        for w in ["нк", "жк", "ыы", "спс", "мск", "спб", "лол", "кек", "ааа", "Чтл", "шдё", "щвё", "ьёз", "гёе"] {
+            assert_eq!(best_fix(w, Lang::Ru, dicts()), None, "{w}");
+        }
     }
 
     #[test]
