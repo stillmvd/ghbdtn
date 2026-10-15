@@ -124,6 +124,7 @@ fn main() {
         ("in english b lf;t ", Lang::En, "in english и даже "),
         ("пкфафтф ", Lang::Ru, "grafana "),
         ("приверяю ", Lang::Ru, "проверяю "),
+        ("увдел ", Lang::Ru, "увидел "),
     ];
     let mut failed = 0;
     for (input_text, l, want) in cases {
@@ -200,6 +201,25 @@ fn main() {
     tap_vk(np, &[VK_RETURN]);
     let got = text_of(np);
     report(&mut failed, got.trim_end() == "привет" && got.ends_with(['\r', '\n']), format!("Enter → {got:?}"));
+
+    clear(np);
+    lang::switch(Lang::En);
+    std::thread::sleep(Duration::from_millis(200));
+    type_text(np, "ghbdtnn ", Lang::En);
+    tap_vk(np, &[VK_BACK]);
+    tap_vk(np, &[VK_BACK]);
+    tap_vk(np, &[VK_RETURN]);
+    let got = text_of(np);
+    report(&mut failed, got.trim_end() == "ghbdtn" && got.len() - got.trim_end().len() <= 2, format!("⌫⌫ Enter → {got:?}"));
+
+    clear(np);
+    lang::switch(Lang::En);
+    std::thread::sleep(Duration::from_millis(200));
+    type_text(np, "hello  ", Lang::En);
+    tap_vk(np, &[VK_BACK]);
+    type_text(np, "ghbdtn ", Lang::En);
+    let got = text_of(np);
+    report(&mut failed, got == "hello привет ", format!("двойной пробел ⌫ → {got:?}"));
 
     while let Ok(ev) = rx.try_recv() {
         if let CoreEvent::Status(s) = ev {

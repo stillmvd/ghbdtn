@@ -411,7 +411,7 @@ impl Worker {
                 self.prev = self.last.take();
                 self.word_lang = Some(lang);
                 self.tail = None;
-                if self.edit.as_ref().is_some_and(|e| !e.text.is_empty()) {
+                if self.edit.as_ref().is_some_and(|e| e.text.chars().last().is_some_and(char::is_alphanumeric)) {
                     self.glued = true;
                 }
             }
