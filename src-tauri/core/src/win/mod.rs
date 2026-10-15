@@ -93,11 +93,13 @@ struct LastWord {
     sep: String,
 }
 
+#[derive(Default)]
 struct Shown {
     text: String,
     before: String,
     keys: Option<(Vec<Key>, Lang)>,
     fix: Option<(String, String)>,
+    glued: bool,
 }
 
 struct Worker {
@@ -236,6 +238,9 @@ impl Worker {
     fn back(&mut self) {
         if !self.word.is_empty() {
             self.word.backspace();
+            if self.word.is_empty() {
+                self.word_lang = None;
+            }
             if let Some(e) = self.edit.as_mut() {
                 e.text.pop();
             }
@@ -261,6 +266,7 @@ impl Worker {
                     self.word.push(*k);
                 }
                 self.word_lang = Some(*lang);
+                self.glued = e.glued;
             }
         }
     }
@@ -410,6 +416,9 @@ impl Worker {
                 }
             }
             self.word.push(key);
+            if self.word.is_empty() {
+                return self.reset();
+            }
             if let (Some(e), Some(c)) = (self.edit.as_mut(), key.char_in(lang)) {
                 e.text.push(c);
             }
@@ -421,11 +430,18 @@ impl Worker {
     fn finish(&mut self, sep: Separator, enter_eaten: bool) {
         let glued = std::mem::take(&mut self.glued);
         let edit = self.edit.take();
-        self.tail = None;
+        let tail = self.tail.take();
         let Some(lang) = self.word_lang.take().filter(|_| !self.word.is_empty()) else {
             self.last = None;
             if enter_eaten {
                 output::enter();
+            }
+            if sep != Separator::Enter {
+                self.tail = lang::current().map(|l| {
+                    let mut t = edit.or(tail).unwrap_or_default();
+                    t.text += &sep.text(l);
+                    t
+                });
             }
             return;
         };
@@ -435,7 +451,7 @@ impl Worker {
         let keys = self.word.take();
         let (status, mode) = self.evaluate();
         let cfg = self.cfg();
-        let fix = (status == Status::Working && !keys.is_empty() && !glued)
+        let fix = (status == Status::Working && !keys.is_empty() && !glued && (sep != Separator::Enter || enter_eaten))
             .then(|| decide(&WordInput { keys: &keys, lang, code_mode: mode == Mode::Code }, &self.dicts, &cfg))
             .flatten();
         let sep_typed = sep.text(lang);
@@ -477,7 +493,7 @@ impl Worker {
                 self.emit(CoreEvent::Acted { kind: fix.kind, typed: fix.typed.clone(), result: fix.text.clone() });
                 self.last = None;
                 if sep != Separator::Enter {
-                    self.tail = Some(Shown { text: fix.text.clone() + &sep_out, before: fix.text.clone(), keys: None, fix: Some((fix.typed.clone(), fix.text.clone())) });
+                    self.tail = Some(Shown { text: fix.text.clone() + &sep_out, before: fix.text.clone(), keys: None, fix: Some((fix.typed.clone(), fix.text.clone())), glued: false });
                 }
             }
             None => {
@@ -486,7 +502,7 @@ impl Worker {
                 }
                 if sep != Separator::Enter {
                     let shown = render(&keys, lang);
-                    self.tail = Some(Shown { text: shown.clone() + &sep_typed, before: shown, keys: Some((keys.clone(), lang)), fix: None });
+                    self.tail = Some(Shown { text: shown.clone() + &sep_typed, before: shown, keys: Some((keys.clone(), lang)), fix: None, glued });
                 }
                 self.last = (sep != Separator::Enter).then_some(LastWord { keys, lang, sep: sep_typed });
             }
