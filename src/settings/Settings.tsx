@@ -59,7 +59,7 @@ function Main({ cfg, save }: Ctx) {
             <Row title="Запускать с Windows"><Toggle on={cfg.autostart} label="Запускать с Windows" onChange={(v) => save({ ...cfg, autostart: v })} /></Row>
           </Group>
           <Group label="Журнал">
-            <Row title="Вести журнал" sub="Исправления со словами — только на этом компьютере, 30 дней"><Toggle on={cfg.journal} label="Вести журнал" onChange={(v) => save({ ...cfg, journal: v })} /></Row>
+            <Row title="Вести журнал" sub="Исправления со словами — только на этом компьютере, 30 дней; выключение стирает журнал"><Toggle on={cfg.journal} label="Вести журнал" onChange={(v) => save({ ...cfg, journal: v })} /></Row>
           </Group>
         </div>
         <Group label="Показывать">
@@ -221,7 +221,7 @@ function Updates() {
   const busy = checking || phase === "checking" || phase === "downloading" || phase === "installing";
   const sub = status?.error
     ? status.error
-    : phase === "ready" ? `Готова версия ${status?.available ?? ""}`
+    : phase === "ready" ? `Готова версия ${status?.available?.version ?? ""}`
     : phase === "downloading" ? "Скачиваю обновление"
     : busy ? "Проверяю"
     : status?.lastCheck ? `Последняя версия · проверено ${ago(status.lastCheck)}` : "";

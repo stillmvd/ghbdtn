@@ -140,6 +140,9 @@ fn save(app: &AppHandle, s: &Shared, mut cfg: Config) -> Result<Config, Vec<Conf
         return Err(vec![err("file", e.to_string())]);
     }
     s.engine.set_config(cfg.clone());
+    if prev.journal && !cfg.journal {
+        s.journal.clear();
+    }
     refresh(s);
     let _ = app.emit("config-changed", &cfg);
     Ok(cfg)
@@ -351,11 +354,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| open_settings(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_ship::init(|app| {
-            if let Some(s) = app.try_state::<S>() {
-                s.engine.stop();
-            }
-        }))
+        .plugin(tauri_plugin_ship::init(|_| {}))
         .invoke_handler(tauri::generate_handler![
             flyout_state,
             get_config,

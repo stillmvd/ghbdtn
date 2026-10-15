@@ -6,6 +6,7 @@ use windows::Win32::System::SystemInformation::GetLocalTime;
 
 const KEEP_DAYS: i64 = 30;
 const MAX_BYTES: u64 = 5 * 1024 * 1024;
+const DAY_BYTES: u64 = 1024 * 1024;
 
 #[derive(Serialize)]
 #[serde(tag = "ev", rename_all = "lowercase")]
@@ -51,17 +52,29 @@ impl Journal {
         let Ok(text) = serde_json::to_string(&line) else { return };
         let mut day = self.day.lock().unwrap();
         if *day != date {
-            let _ = std::fs::create_dir_all(&self.dir);
+            if std::fs::create_dir_all(&self.dir).is_err() {
+                return;
+            }
             self.prune(&date);
             *day = date.clone();
         }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(self.dir.join(format!("{date}.jsonl"))) {
+        let path = self.dir.join(format!("{date}.jsonl"));
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() >= DAY_BYTES) {
+            return;
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
             let _ = writeln!(f, "{text}");
         }
     }
 
+    pub fn clear(&self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+        self.day.lock().unwrap().clear();
+    }
+
     fn prune(&self, today: &str) {
         let Ok(read) = std::fs::read_dir(&self.dir) else { return };
+        let today_name = today.to_string();
         let today = days(today).unwrap_or(0);
         let mut files: Vec<(String, PathBuf, u64)> = read
             .flatten()
@@ -70,6 +83,7 @@ impl Journal {
                 let size = e.metadata().ok()?.len();
                 Some((name, e.path(), size))
             })
+            .filter(|(name, _, _)| *name != today_name)
             .collect();
         files.sort();
         files.retain(|(name, path, _)| {
@@ -81,7 +95,7 @@ impl Journal {
         });
         let mut total: u64 = files.iter().map(|f| f.2).sum();
         for (_, path, size) in &files {
-            if total <= MAX_BYTES {
+            if total <= MAX_BYTES - DAY_BYTES {
                 break;
             }
             if std::fs::remove_file(path).is_ok() {
