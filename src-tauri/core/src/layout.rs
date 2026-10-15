@@ -81,6 +81,42 @@ const SHORT_EN: &[&str] = &[
     "do", "go", "up", "us", "if", "am", "ok", "hi", "oh",
 ];
 
+const ACRO_EN: &[&str] = &[
+    "AI", "API", "UI", "UX", "ML", "LLM", "GPT", "SDK", "CLI", "IDE", "CSS", "HTML", "JSON", "XML", "YAML", "SQL", "VPN",
+    "USB", "PDF", "URL", "HTTP", "HTTPS", "DNS", "SSH", "SSL", "TLS", "CPU", "GPU", "RAM", "SSD", "HDD", "OS", "PC", "IT",
+    "HR", "QA", "CI", "CD", "PR", "MR", "JS", "TS", "JSX", "TSX", "DB", "ID", "IP", "TV", "PM", "SEO", "MVP", "KPI", "CEO",
+    "CTO", "FAQ", "ASAP", "FYI", "IMO", "BTW", "AWS", "GCP", "CDN", "CRM", "ERP", "OCR", "NFT", "VR", "AR", "IOT", "RGB",
+    "SVG", "PNG", "JPG", "GIF", "MP3", "MP4", "DM", "PS", "TBD", "WIP", "ETA", "UTC", "GMT",
+];
+const ACRO_RU: &[&str] = &[
+    "ИИ", "США", "РФ", "МВД", "ЖКХ", "ВУЗ", "ТЦ", "ЖК", "МГУ", "ФСБ", "ГИБДД", "ДТП", "ИП", "ООО", "НДС", "ЗП", "ТВ", "ПК",
+    "СМИ", "ОС", "ЕГЭ", "ОГЭ", "ВВП", "РЖД", "МЧС", "ЦБ", "СНГ", "ЕС", "ТЗ", "ЛС", "ЛК", "ДР", "НГ", "МСК", "СПБ", "РАН",
+    "ФНС", "ПФР", "МФЦ", "ДС", "ЧП", "ВК", "ТГ",
+];
+const ACRO_MAX: usize = 5;
+
+pub fn acronym(keys: &[Key], lang: Lang, dicts: &Dictionaries) -> Option<String> {
+    let trailing = keys.iter().rev().take_while(|k| k.char_in(lang).is_some_and(|c| TAIL.contains(&c))).count();
+    let (keys, tail) = keys.split_at(keys.len() - trailing);
+    let typed = render(keys, lang);
+    let n = typed.chars().count();
+    if !(2..=ACRO_MAX).contains(&n) || !typed.chars().all(|c| c.is_uppercase() && lang.owns_letter(c)) {
+        return None;
+    }
+    let alt = render(keys, lang.other());
+    let list = match lang.other() {
+        Lang::Ru => ACRO_RU,
+        Lang::En => ACRO_EN,
+    };
+    let own = match lang {
+        Lang::Ru => ACRO_RU,
+        Lang::En => ACRO_EN,
+    };
+    let lower = typed.to_lowercase();
+    (list.contains(&alt.as_str()) && !own.contains(&typed.as_str()) && !dicts.seen(lang, &lower) && !dicts.known(lang, &lower))
+        .then(|| alt + &render(tail, lang))
+}
+
 fn short_word(word: &str, lang: Lang) -> bool {
     let list = match lang {
         Lang::Ru => SHORT_RU,
@@ -150,6 +186,18 @@ mod tests {
         assert_eq!(s("с", Lang::Ru), None);
         assert_eq!(s("ш", Lang::Ru).as_deref(), Some("i"));
         assert_eq!(s("ghb", Lang::En), None);
+    }
+
+    #[test]
+    fn acronyms_switch() {
+        let a = |t: &str, l| acronym(&keys_for(t, l), l, dicts());
+        assert_eq!(a("ФШ", Lang::Ru).as_deref(), Some("AI"));
+        assert_eq!(a("ФЗШ", Lang::Ru).as_deref(), Some("API"));
+        assert_eq!(a("CIF", Lang::En).as_deref(), Some("США"));
+        assert_eq!(a("фш", Lang::Ru), None);
+        assert_eq!(a("ФШ?", Lang::Ru).as_deref(), Some("AI?"));
+        assert_eq!(a("ОК", Lang::Ru), None);
+        assert_eq!(a("IT", Lang::En), None);
     }
 
     #[test]

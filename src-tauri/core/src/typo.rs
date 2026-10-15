@@ -27,6 +27,18 @@ const FAR_SHORT: f32 = 1.2;
 const FAR_LONG: f32 = 1.6;
 const MOVED: f32 = 0.7;
 const MOVED_EDIT: f32 = 0.6;
+const PREFIXES: &[&str] = &[
+    "пере", "недо", "при", "раз", "рас", "под", "про", "пре", "без", "бес", "по", "на", "за", "вы", "от", "до", "из", "ис",
+    "об", "во", "вз", "вс", "с", "у", "о", "в",
+];
+const VERB_ENDS: &[&str] = &[
+    "ть", "ться", "ти", "л", "ла", "ли", "ло", "лся", "лась", "лись", "лось", "ешь", "ишь", "ет", "ют", "ут", "ит", "ят",
+    "ат", "ем", "им", "ете", "ите", "ется", "ются", "ится", "ятся", "нный", "нная", "нное", "нные", "нным", "нных", "нн",
+    "вший", "вшая", "вшие", "вши",
+];
+const PREFIXED_MIN: usize = 5;
+const LEAD: f32 = 1.0;
+const AGREE_RATIO: u32 = 3;
 const AFTER_NUMBER: &[&str] = &[
     "год", "года", "году", "лет", "раз", "раза", "рубль", "рубля", "рублей", "доллар", "доллара", "долларов", "евро",
     "минута", "минуты", "минут", "час", "часа", "часов", "секунд", "секунды", "день", "дня", "дней", "неделя", "недели",
@@ -305,6 +317,15 @@ fn pick<'a>(prev: Option<&str>, close: &[&'a str], lang: Lang, dicts: &Dictionar
     }
 }
 
+fn prefixed_verb(word: &str, dicts: &Dictionaries) -> bool {
+    PREFIXES.iter().any(|p| {
+        word.strip_prefix(p).is_some_and(|rest| {
+            rest.chars().next() != p.chars().last()
+                && rest.chars().count() >= PREFIXED_MIN && VERB_ENDS.iter().any(|e| rest.ends_with(e)) && dicts.known(Lang::Ru, rest)
+        })
+    })
+}
+
 fn solid(word: &str, lang: Lang, dicts: &Dictionaries) -> bool {
     dicts.freq(lang, word) >= SOLID_FREQ || dicts.certain(lang, word)
 }
@@ -342,6 +363,9 @@ pub fn fix_after(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionari
     if dicts.known(lang, typed) {
         return real_word_fix(typed, &chars, prev, lang, dicts);
     }
+    if lang == Lang::Ru && prefixed_verb(&lower, dicts) {
+        return None;
+    }
     let capital = typed.chars().next().is_some_and(char::is_uppercase);
     let limit = if capital {
         MAX_WEIGHT
@@ -365,7 +389,13 @@ pub fn fix_after(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionari
     }
     let (best, _) = scored.first()?;
     let close: Vec<&str> = scored.iter().take_while(|(s, _)| best - s < GAP).map(|(_, c)| c.as_str()).collect();
-    let cand = pick(prev, &close, lang, dicts).filter(|c| solid(c, lang, dicts))?;
+    let agree = || {
+        let (p, (_, top), (second_score, second)) = (prev?, &scored[0], scored.get(1)?);
+        let ctx = dicts.bigram(lang, p, top);
+        let agrees = ctx >= CTX_MIN && ctx >= AGREE_RATIO * dicts.bigram(lang, p, second).max(1);
+        (lang == Lang::Ru && best - second_score >= LEAD && agrees).then_some(top.as_str())
+    };
+    let cand = pick(prev, &close, lang, dicts).or_else(agree).filter(|c| solid(c, lang, dicts))?;
     if typed_freq > 0 && dicts.freq(lang, cand) < OUTRANK * typed_freq {
         return None;
     }
@@ -391,6 +421,10 @@ mod tests {
         assert_eq!(f("грода", Some("центр")).as_deref(), Some("города"));
         assert_eq!(f("грода", None), None);
         assert_eq!(f("грода", Some("2026")).as_deref(), Some("года"));
+        assert_eq!(f("сгенерировали", None), None);
+        assert_eq!(f("ссказать", None).as_deref(), Some("сказать"));
+        assert_eq!(f("сгенерирован", Some("код")), None);
+        assert_eq!(f("поменяд", Some("он")).as_deref(), Some("поменял"));
     }
 
     #[test]
