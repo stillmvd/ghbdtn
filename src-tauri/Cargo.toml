@@ -24,6 +24,8 @@ tauri-build = { version = "2", features = [] }
 ghbdtn-core = { path = "core" }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2.13"
+tauri-plugin-ship = { git = "https://github.com/stillmvd/tauri-ship", tag = "v0.1.1" }
 crossbeam-channel = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

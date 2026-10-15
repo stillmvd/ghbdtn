@@ -17,7 +17,33 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/icon.ico"]
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "installerIcon": "icons/icon.ico",
+        "template": "../node_modules/@stillmvd/tauri-ship/nsis/installer.nsi"
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY1NENBODBBMjMxMUE4NTAKUldSUXFCRWpDcWhNWmNodHArQzEzMjV1VXNXWlp4eVRmRERyVmV4VTYwVTM5TW9FUmpYZHE4YU0K",
+      "endpoints": [
+        "https://github.com/stillmvd/ghbdtn/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

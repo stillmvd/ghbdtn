@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import "@stillmvd/tauri-ship/ship.css";
 import "./app.css";
 import { Flyout } from "./flyout/Flyout";
 import { Overlay } from "./overlay/Overlay";

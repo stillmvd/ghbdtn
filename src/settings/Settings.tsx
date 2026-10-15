@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { checkNow, installNow, UpdateBadge, UpdateToast, useShip } from "@stillmvd/tauri-ship";
 import { api, errorsOf, type About, type Config, type ConfigError, type Proc } from "../api";
 import { Icon, Kbd, Mark, Toggle } from "../Icon";
 import "./settings.css";
@@ -208,6 +209,32 @@ function Keys({ cfg, save, errors }: Ctx) {
   );
 }
 
+function ago(ms: number) {
+  const m = Math.floor((Date.now() - ms) / 60_000);
+  return m < 1 ? "только что" : m < 60 ? `${m} мин назад` : `в ${new Date(ms).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+function Updates() {
+  const { status } = useShip();
+  const [checking, setChecking] = useState(false);
+  const phase = status?.phase ?? "idle";
+  const busy = checking || phase === "checking" || phase === "downloading" || phase === "installing";
+  const sub = status?.error
+    ? status.error
+    : phase === "ready" ? `Готова версия ${status?.available ?? ""}`
+    : phase === "downloading" ? "Скачиваю обновление"
+    : busy ? "Проверяю"
+    : status?.lastCheck ? `Последняя версия · проверено ${ago(status.lastCheck)}` : "";
+  const check = async () => { setChecking(true); try { await checkNow(); } finally { setChecking(false); } };
+  return (
+    <Row title="Обновления" sub={sub}>
+      {phase === "ready"
+        ? <button type="button" className="t-btn s32 p" onClick={() => installNow()}>Перезапустить</button>
+        : <button type="button" className="t-btn s32" disabled={busy} onClick={check}>Проверить</button>}
+    </Row>
+  );
+}
+
 function AboutSec() {
   const [a, setA] = useState<About | null>(null);
   useEffect(() => { api.about().then(setA).catch(() => {}); }, []);
@@ -215,6 +242,7 @@ function AboutSec() {
   return (
     <>
       <Row title={`Ghbdtn ${a.version}`} sub="Набранный текст не пишется на диск и никуда не отправляется"><Mark /></Row>
+      <Updates />
       <Group label="Словари">
         {a.licenses.map((l) => <Row key={l.name} title={l.name} sub={`${l.source} · ${l.license}`}><span /></Row>)}
       </Group>
@@ -255,6 +283,7 @@ export function Settings() {
         <Mark className="st-mk" />
         <span className="name" data-tauri-drag-region>Ghbdtn</span>
         <span className="sp" data-tauri-drag-region />
+        <UpdateBadge />
         <div className="t-win">
           <button type="button" aria-label="Свернуть" onClick={() => win.minimize()}><Icon name="min" /></button>
           <button type="button" className="close" aria-label="Закрыть" onClick={() => win.close()}><Icon name="x" /></button>
@@ -275,6 +304,7 @@ export function Settings() {
           </div>
         </main>
       </div>
+      <UpdateToast lang="ru" />
     </div>
   );
 }

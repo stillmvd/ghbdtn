@@ -350,6 +350,12 @@ fn pump(app: AppHandle, s: S, rx: crossbeam_channel::Receiver<CoreEvent>) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| open_settings(app)))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_ship::init(|app| {
+            if let Some(s) = app.try_state::<S>() {
+                s.engine.stop();
+            }
+        }))
         .invoke_handler(tauri::generate_handler![
             flyout_state,
             get_config,

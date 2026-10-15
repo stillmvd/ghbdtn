@@ -11,6 +11,20 @@
 }
 :root[data-theme="light"] { --gb: #4f7a00; --gb-ink: #ffffff; }
 
+:root {
+  --ship-bg: var(--cosmic);
+  --ship-fg: var(--fg);
+  --ship-muted: var(--dim);
+  --ship-accent: var(--gb);
+  --ship-accent-hover: color-mix(in oklab, var(--gb) 86%, var(--fg));
+  --ship-accent-fg: var(--gb-ink);
+  --ship-accent-soft: var(--gb-soft);
+  --ship-warn: var(--danger);
+  --ship-hover: var(--hover-strong);
+  --ship-border: var(--line);
+  --ship-radius: 20px;
+}
+
 html, body, #root { height: 100%; }
 body { font-variant-numeric: tabular-nums; }
 .gb-ic { display: block; flex: none; width: 16px; height: 16px; }
