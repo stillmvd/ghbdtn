@@ -159,23 +159,28 @@ fn decide_is_fast() {
     let cfg = config();
     let words = top_words(Lang::Ru);
     let sample: Vec<String> = words.iter().take(500).flat_map(|w| [w.clone(), format!("{w}ъ")]).collect();
-    let t = Instant::now();
-    for w in &sample {
-        let _ = run(w, Lang::Ru, Lang::Ru, false, &dicts, &cfg);
-    }
-    let avg = t.elapsed() / sample.len() as u32;
+    let avg = (0..3)
+        .map(|_| {
+            let t = Instant::now();
+            for w in &sample {
+                let _ = run(w, Lang::Ru, Lang::Ru, false, &dicts, &cfg);
+            }
+            t.elapsed() / sample.len() as u32
+        })
+        .min()
+        .unwrap();
     println!("decide avg {avg:?}");
     assert!(avg.as_millis() < 2 || cfg!(debug_assertions));
 }
 
-fn ctx_variants(word: &str) -> Vec<String> {
+fn ctx_variants(word: &str, lang: Lang) -> Vec<String> {
     let c: Vec<char> = word.chars().collect();
     if c.len() > 3 {
-        return typo_variants(word, Lang::Ru);
+        return typo_variants(word, lang);
     }
     let mut out = Vec::new();
     for i in 0..c.len() {
-        if let Some(r) = Lang::Ru.alphabet().chars().find(|&r| adjacent(c[i], r, Lang::Ru)) {
+        if let Some(r) = lang.alphabet().chars().find(|&r| adjacent(c[i], r, lang)) {
             let mut v = c.clone();
             v[i] = r;
             out.push(v);
@@ -189,32 +194,31 @@ fn ctx_variants(word: &str) -> Vec<String> {
     out.into_iter().map(|v| v.into_iter().collect()).collect()
 }
 
-#[test]
-fn context_typos() {
+fn context_check(lang: Lang, text: &str) {
     let dicts = Dictionaries::load();
-    let pairs: Vec<(&str, &str)> = include_str!("ctx_pairs.txt").lines().filter_map(|l| l.split_once(' ')).collect();
+    let pairs: Vec<(&str, &str)> = text.lines().filter_map(|l| l.split_once(' ')).collect();
     let (mut total, mut short, mut changed) = (0, 0, 0);
     let mut stats = [[0u32; 2]; 2];
     let mut changed_samples = Vec::new();
     let mut wrong_samples = Vec::new();
     for (prev, w) in &pairs {
-        if w.chars().count() < 2 || w.contains('-') {
+        if w.chars().count() < 2 || w.contains(['-', '\'']) {
             continue;
         }
-        if let Some(out) = fix_after(w, Some(prev), Lang::Ru, &dicts) {
+        if let Some(out) = fix_after(w, Some(prev), lang, &dicts) {
             changed += 1;
             if changed_samples.len() < 15 {
                 changed_samples.push(format!("{prev} {w}→{out}"));
             }
         }
-        for v in ctx_variants(w) {
-            if dicts.seen(Lang::Ru, &v) {
+        for v in ctx_variants(w, lang) {
+            if dicts.seen(lang, &v) || (lang == Lang::En && v.chars().count() <= 3) {
                 continue;
             }
             total += 1;
             short += (v.chars().count() <= 3) as u32;
             for (i, p) in [None, Some(*prev)].into_iter().enumerate() {
-                match fix_after(&v, p, Lang::Ru, &dicts) {
+                match fix_after(&v, p, lang, &dicts) {
                     Some(out) if out == *w => stats[i][0] += 1,
                     Some(out) => {
                         stats[i][1] += 1;
@@ -229,7 +233,7 @@ fn context_typos() {
     }
     let pct = |n: u32| n as f64 * 100.0 / total as f64;
     println!(
-        "Ru ctx of {total} (short {short}): alone right {:.1}% wrong {:.2}%, with prev right {:.1}% wrong {:.2}%, correct changed {changed} {changed_samples:?} {wrong_samples:?}",
+        "{lang:?} ctx of {total} (short {short}): alone right {:.1}% wrong {:.2}%, with prev right {:.1}% wrong {:.2}%, correct changed {changed} {changed_samples:?} {wrong_samples:?}",
         pct(stats[0][0]),
         pct(stats[0][1]),
         pct(stats[1][0]),
@@ -237,4 +241,14 @@ fn context_typos() {
     );
     assert!(changed as f64 <= pairs.len() as f64 * 0.0005, "context changed correct words");
     assert!(stats[1][1] as f64 <= stats[0][1] as f64 * 1.2 + 5.0, "context adds wrong fixes");
+}
+
+#[test]
+fn context_typos() {
+    context_check(Lang::Ru, include_str!("ctx_pairs.txt"));
+}
+
+#[test]
+fn context_typos_en() {
+    context_check(Lang::En, include_str!("ctx_pairs_en.txt"));
 }

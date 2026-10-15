@@ -5,18 +5,25 @@ const HELD_EVERY: u64 = 20;
 const HELD_MAX: usize = 40_000;
 const MIN_COUNT: u32 = 3;
 
-fn cyr(c: char) -> bool {
-    matches!(c, 'а'..='я' | 'ё')
+fn letter(c: char, ru: bool) -> bool {
+    if ru {
+        matches!(c, 'а'..='я' | 'ё')
+    } else {
+        c.is_ascii_lowercase()
+    }
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let [out, held, max_pairs, inputs @ ..] = args.as_slice() else {
-        eprintln!("bigrams <out> <held> <max_pairs> <sentences.txt>...");
+    let [lang, out, held, max_pairs, inputs @ ..] = args.as_slice() else {
+        eprintln!("bigrams <ru|en> <out> <held> <max_pairs> <sentences.txt>...");
         std::process::exit(1);
     };
     let max_pairs: usize = max_pairs.parse().unwrap();
-    let vocab: HashMap<String, u32> = include_str!("../data/ru.freq")
+    let ru = lang == "ru";
+    let joiner = if ru { '-' } else { '\'' };
+    let freq = if ru { include_str!("../data/ru.freq") } else { include_str!("../data/en.freq") };
+    let vocab: HashMap<String, u32> = freq
         .lines()
         .filter_map(|l| l.split_once(' '))
         .enumerate()
@@ -35,13 +42,22 @@ fn main() {
             let is_held = n.is_multiple_of(HELD_EVERY);
             let mut prev: Option<u32> = None;
             let mut tok = String::new();
-            for c in text.chars().chain(std::iter::once('\n')).flat_map(char::to_lowercase) {
-                if cyr(c) || (c == '-' && !tok.is_empty()) {
+            let mut bad = false;
+            for c in text.chars().chain(std::iter::once('\n')).flat_map(char::to_lowercase).map(|c| if c == '’' { '\'' } else { c }) {
+                if letter(c, ru) || (c == joiner && !tok.is_empty()) {
                     tok.push(if c == 'ё' { 'е' } else { c });
                     continue;
                 }
+                if c.is_alphanumeric() {
+                    bad = true;
+                    continue;
+                }
+                if std::mem::take(&mut bad) {
+                    tok.clear();
+                    prev = None;
+                }
                 if !tok.is_empty() {
-                    let id = vocab.get(tok.trim_end_matches('-')).copied();
+                    let id = vocab.get(tok.trim_end_matches(joiner)).copied();
                     if let (Some(p), Some(w)) = (prev, id) {
                         if is_held {
                             held_pairs.push((p, w));

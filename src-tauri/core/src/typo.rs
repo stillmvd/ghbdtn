@@ -17,6 +17,7 @@ const PAIR_LEN: usize = 2;
 const PAIR_MIN: u32 = 20;
 const CTX_MIN: u32 = 3;
 const CTX_RATIO: u32 = 10;
+const EN_CTX_RATIO: u32 = 20;
 const WEAK_FREQ: u32 = 1000;
 const WEAK_RATIO: u32 = 300;
 const SOLID_FREQ: u32 = 100;
@@ -261,7 +262,8 @@ fn by_context<'a>(prev: Option<&str>, cands: &[&'a str], lang: Lang, dicts: &Dic
     s.sort_by_key(|x| std::cmp::Reverse(x.0));
     let (top, best) = *s.first()?;
     let second = s.get(1).map_or(0, |x| x.0);
-    (top >= CTX_MIN && top >= CTX_RATIO * second.max(1)).then_some(best)
+    let ratio = if lang == Lang::En { EN_CTX_RATIO } else { CTX_RATIO };
+    (top >= CTX_MIN && top >= ratio * second.max(1)).then_some(best)
 }
 
 fn pick<'a>(prev: Option<&str>, close: &[&'a str], lang: Lang, dicts: &Dictionaries) -> Option<&'a str> {

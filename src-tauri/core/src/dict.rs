@@ -8,6 +8,7 @@ const TERM_FREQ: u32 = 300;
 pub const BIGRAM_SCALE: f64 = 16.0;
 const SUFFIX_SAMPLES: u32 = 3;
 static RU_BIGRAMS: &[u8] = include_bytes!("../data/ru.bigram");
+static EN_BIGRAMS: &[u8] = include_bytes!("../data/en.bigram");
 
 pub struct Dictionaries {
     ru: Dictionary,
@@ -17,6 +18,7 @@ pub struct Dictionaries {
     extra: HashSet<String>,
     ru_by_first: ByFirst,
     ru_ids: HashMap<Box<str>, u32>,
+    en_ids: HashMap<Box<str>, u32>,
 }
 
 type ByFirst = HashMap<char, Vec<(Box<[char]>, u32)>>;
@@ -80,8 +82,9 @@ impl Dictionaries {
             }
         }
         let ru_freq = parse_freq(include_str!("../data/ru.freq"));
-        let ru_ids = include_str!("../data/ru.bigram.words").lines().enumerate().map(|(i, w)| (w.into(), i as u32)).collect();
-        Dictionaries { ru, en, ru_by_first: by_first(&ru_freq), ru_freq, en_freq, extra: HashSet::new(), ru_ids }
+        let ids = |text: &str| text.lines().enumerate().map(|(i, w)| (w.into(), i as u32)).collect();
+        let (ru_ids, en_ids) = (ids(include_str!("../data/ru.bigram.words")), ids(include_str!("../data/en.bigram.words")));
+        Dictionaries { ru, en, ru_by_first: by_first(&ru_freq), ru_freq, en_freq, extra: HashSet::new(), ru_ids, en_ids }
     }
 
     pub fn add_user_words(&mut self, text: &str) -> usize {
@@ -138,18 +141,26 @@ impl Dictionaries {
         }
     }
 
+    fn bigram_table(&self, lang: Lang) -> (&HashMap<Box<str>, u32>, &'static [u8]) {
+        match lang {
+            Lang::Ru => (&self.ru_ids, RU_BIGRAMS),
+            Lang::En => (&self.en_ids, EN_BIGRAMS),
+        }
+    }
+
+    fn bigram_id(&self, lang: Lang, word: &str) -> Option<u32> {
+        let key = word.trim_end_matches(['-', '\'']).to_lowercase().replace('ё', "е");
+        self.bigram_table(lang).0.get(key.as_str()).copied()
+    }
+
     pub fn in_bigrams(&self, lang: Lang, word: &str) -> bool {
-        lang == Lang::Ru && self.ru_ids.contains_key(word.trim_end_matches('-').to_lowercase().replace('ё', "е").as_str())
+        self.bigram_id(lang, word).is_some()
     }
 
     pub fn bigram(&self, lang: Lang, prev: &str, word: &str) -> u32 {
-        if lang != Lang::Ru {
-            return 0;
-        }
-        let id = |w: &str| self.ru_ids.get(w.trim_end_matches('-').to_lowercase().replace('ё', "е").as_str()).copied();
-        let (Some(a), Some(b)) = (id(prev), id(word)) else { return 0 };
+        let (Some(a), Some(b)) = (self.bigram_id(lang, prev), self.bigram_id(lang, word)) else { return 0 };
         let key = |r: &[u8; 7]| (u32::from_le_bytes([r[0], r[1], r[2], 0]), u32::from_le_bytes([r[3], r[4], r[5], 0]));
-        let (recs, _) = RU_BIGRAMS.as_chunks::<7>();
+        let (recs, _) = self.bigram_table(lang).1.as_chunks::<7>();
         recs.binary_search_by(|r| key(r).cmp(&(a, b)))
             .map_or(0, |i| (recs[i][6] as f64 / BIGRAM_SCALE).exp().round() as u32)
     }
