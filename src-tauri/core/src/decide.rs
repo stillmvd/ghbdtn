@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::dict::Dictionaries;
 use crate::keymap::Lang;
-use crate::layout::{decide_layout, split_tail};
+use crate::layout::{decide_layout, short_pair, split_tail};
 use crate::replace::apply_case;
 use crate::token::is_code_token;
 use crate::typo::fix_after;
@@ -36,7 +36,7 @@ pub fn decide(input: &WordInput, dicts: &Dictionaries, cfg: &Config) -> Option<F
         }
     }
     if cfg.features.layout && !(input.code_mode && is_code_token(core, true)) {
-        if let Some(text) = decide_layout(input.keys, input.lang, dicts) {
+        if let Some(text) = decide_layout(input.keys, input.lang, dicts).or_else(|| short_pair(input.keys, input.lang, input.prev, dicts)) {
             return fix(ActionKind::Layout, text, Some(input.lang.other()));
         }
     }

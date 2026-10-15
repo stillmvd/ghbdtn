@@ -1,12 +1,13 @@
 use crate::dict::Dictionaries;
 use crate::keymap::Lang;
-use crate::word::{render, Key};
+use crate::word::{keys_for, render, Key};
 
 use crate::typo::near_freq;
 
 const ALT_FREQ: u32 = 200;
 const OVERRIDE_FREQ: u32 = 20_000;
 const NEAR_RATIO: u32 = 10;
+const PAIR_MIN: u32 = 10;
 const TAIL: &[char] = &[',', '.', ';', ':', '\'', '"', '?', '!', ')', '»'];
 
 pub fn split_tail(text: &str, lang: Lang) -> (&str, &str) {
@@ -97,6 +98,17 @@ pub fn short_alongside(keys: &[Key], lang: Lang) -> Option<String> {
     (!short_word(&typed, lang) && short_word(&alt, lang.other())).then_some(alt)
 }
 
+pub fn short_pair(keys: &[Key], lang: Lang, prev: Option<&str>, dicts: &Dictionaries) -> Option<String> {
+    let prev = prev?;
+    let alt = short_alongside(keys, lang)?;
+    let prev_alt = short_alongside(&keys_for(prev, lang), lang)?;
+    let typed = render(keys, lang);
+    let lower = |t: &str| !t.chars().any(char::is_uppercase);
+    (lower(&typed) && lower(prev) && typed.chars().count() + prev.chars().count() >= 3
+        && dicts.bigram(lang.other(), &prev_alt, &alt) >= PAIR_MIN)
+        .then_some(alt)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,6 +150,18 @@ mod tests {
         assert_eq!(s("с", Lang::Ru), None);
         assert_eq!(s("ш", Lang::Ru).as_deref(), Some("i"));
         assert_eq!(s("ghb", Lang::En), None);
+    }
+
+    #[test]
+    fn short_pair_switches_together() {
+        let p = |t: &str, prev, l| short_pair(&keys_for(t, l), l, Some(prev), dicts());
+        assert_eq!(p("tq", "vs", Lang::En).as_deref(), Some("ей"));
+        assert_eq!(p("yt", "z", Lang::En).as_deref(), Some("не"));
+        assert_eq!(p("c", "b", Lang::En), None);
+        assert_eq!(p("Tq", "vs", Lang::En), None);
+        assert_eq!(p("jn", "lj", Lang::En), None);
+        assert_eq!(p("it", "vs", Lang::En), None);
+        assert_eq!(short_pair(&keys_for("tq", Lang::En), Lang::En, None, dicts()), None);
     }
 
     #[test]
