@@ -237,3 +237,4 @@ spotify
 steam
 windhawk
 punto
+ublock

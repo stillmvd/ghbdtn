@@ -6,6 +6,7 @@ const KNOWN_FREQ: u32 = 30;
 const TECH_FREQ: u32 = 1000;
 const TERM_FREQ: u32 = 300;
 pub const BIGRAM_SCALE: f64 = 16.0;
+const SUFFIX_SAMPLES: u32 = 3;
 static RU_BIGRAMS: &[u8] = include_bytes!("../data/ru.bigram");
 
 pub struct Dictionaries {
@@ -30,6 +31,27 @@ fn by_first(freq: &HashMap<Box<str>, u32>) -> ByFirst {
         }
     }
     out
+}
+
+fn ru_flags_by_suffix() -> HashMap<String, &'static str> {
+    let mut counts: HashMap<(String, &str), u32> = HashMap::new();
+    for (stem, flags) in include_str!("../data/ru.dic").lines().filter_map(|l| l.split_once('/')) {
+        if stem.starts_with(char::is_uppercase) {
+            continue;
+        }
+        let chars: Vec<char> = stem.chars().collect();
+        for l in [3, 4].into_iter().filter(|&l| chars.len() >= l + 2) {
+            *counts.entry((chars[chars.len() - l..].iter().collect(), flags)).or_insert(0) += 1;
+        }
+    }
+    let mut best: HashMap<String, (&str, u32)> = HashMap::new();
+    for ((suffix, flags), n) in counts {
+        let e = best.entry(suffix).or_insert((flags, 0));
+        if n > e.1 || (n == e.1 && flags < e.0) {
+            *e = (flags, n);
+        }
+    }
+    best.into_iter().filter(|(_, (_, n))| *n >= SUFFIX_SAMPLES).map(|(s, (f, _))| (s, f)).collect()
 }
 
 fn parse_freq(text: &str) -> HashMap<Box<str>, u32> {
@@ -64,12 +86,19 @@ impl Dictionaries {
 
     pub fn add_user_words(&mut self, text: &str) -> usize {
         let mut n = 0;
+        let mut flags: Option<HashMap<String, &str>> = None;
         for w in text.lines().map(|l| l.split('\t').next().unwrap_or("").trim().to_lowercase()) {
             if w.chars().count() < 2 || w.starts_with('#') {
                 continue;
             }
             if w.chars().all(|c| Lang::Ru.owns_letter(c) || c == '-') {
-                n += self.ru.add(&w).is_ok() as usize;
+                let map = flags.get_or_insert_with(ru_flags_by_suffix);
+                let chars: Vec<char> = w.chars().collect();
+                let found = [4, 3]
+                    .into_iter()
+                    .filter(|&l| chars.len() >= l + 2 && !w.contains('-'))
+                    .find_map(|l| map.get(&chars[chars.len() - l..].iter().collect::<String>()));
+                n += self.ru.add(&found.map_or(w.clone(), |f| format!("{w}/{f}"))).is_ok() as usize;
             } else if w.chars().all(|c| c.is_ascii_alphabetic() || c == '\'') {
                 let f = self.en_freq.entry(w.into()).or_insert(0);
                 *f = (*f).max(TERM_FREQ);
@@ -107,6 +136,10 @@ impl Dictionaries {
             Lang::Ru => self.ru_by_first.get(&first).map(Vec::as_slice).unwrap_or(&[]),
             Lang::En => &[],
         }
+    }
+
+    pub fn in_bigrams(&self, lang: Lang, word: &str) -> bool {
+        lang == Lang::Ru && self.ru_ids.contains_key(word.trim_end_matches('-').to_lowercase().replace('ё', "е").as_str())
     }
 
     pub fn bigram(&self, lang: Lang, prev: &str, word: &str) -> u32 {

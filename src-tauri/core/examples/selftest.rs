@@ -127,6 +127,8 @@ fn main() {
         ("увдел ", Lang::Ru, "увидел "),
         ("я нк знаю ", Lang::Ru, "я не знаю "),
         ("я, нк ", Lang::Ru, "я, нк "),
+        ("гу ", Lang::Ru, "ну "),
+        ("по хожу ", Lang::Ru, "по ходу "),
     ];
     let mut failed = 0;
     for (input_text, l, want) in cases {
