@@ -2,8 +2,12 @@ use ghbdtn_core::{dict::Dictionaries, keymap::Lang};
 
 fn main() {
     let d = Dictionaries::load();
-    for w in std::env::args().skip(1).filter(|w| !w.is_empty()) {
+    for arg in std::env::args().skip(1).filter(|w| !w.is_empty()) {
+        let (prev, w) = match arg.split_once('+') {
+            Some((p, w)) => (Some(p), w),
+            None => (None, arg.as_str()),
+        };
         let l = if w.chars().any(|c| c.is_ascii_alphabetic()) { Lang::En } else { Lang::Ru };
-        println!("{w}: known={} freq={} fix={:?}", d.known(l, &w), d.freq(l, &w), ghbdtn_core::typo::best_fix(&w, l, &d));
+        println!("{arg}: known={} freq={} fix={:?}", d.known(l, w), d.freq(l, w), ghbdtn_core::typo::fix_after(w, prev, l, &d));
     }
 }
