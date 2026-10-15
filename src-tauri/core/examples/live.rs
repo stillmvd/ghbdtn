@@ -1,5 +1,23 @@
 use ghbdtn_core::config::Config;
+use ghbdtn_core::win::hook::{DROPPED, EVENTS, FIXES, FIX_US_MAX, FIX_US_TOTAL, REINSTALLS, REPLAYED};
 use ghbdtn_core::win::{CoreEvent, Engine};
+use std::sync::atomic::Ordering::SeqCst;
+use std::time::{Duration, Instant};
+
+fn stats(since: Instant) {
+    let fixes = FIXES.load(SeqCst);
+    let avg = FIX_US_TOTAL.load(SeqCst).checked_div(fixes).unwrap_or(0);
+    println!(
+        "[{} мин] событий хука {}, потеряно {}, переотправлено {}, переустановок {}, исправлений {fixes}, разделитель→ввод ср {:.1} мс, макс {:.1} мс",
+        since.elapsed().as_secs() / 60,
+        EVENTS.load(SeqCst),
+        DROPPED.load(SeqCst),
+        REPLAYED.load(SeqCst),
+        REINSTALLS.load(SeqCst),
+        avg as f64 / 1000.0,
+        FIX_US_MAX.load(SeqCst) as f64 / 1000.0
+    );
+}
 
 fn main() {
     let (tx, rx) = crossbeam_channel::unbounded();
@@ -8,7 +26,14 @@ fn main() {
     println!("Ghbdtn core работает. Конфиг: {}. Выход — Ctrl+C в этом окне.", path.display());
     let cfg = engine.config();
     println!("Конвертация: {}, выключатель: {}", cfg.hotkeys.convert, cfg.hotkeys.toggle);
-    for ev in rx {
+    let started = Instant::now();
+    let mut last = Instant::now();
+    loop {
+        if last.elapsed() >= Duration::from_secs(60) {
+            stats(started);
+            last = Instant::now();
+        }
+        let Ok(ev) = rx.recv_timeout(Duration::from_secs(1)) else { continue };
         match ev {
             CoreEvent::Acted { kind, .. } => println!("{kind:?}"),
             CoreEvent::Undone => println!("undo"),

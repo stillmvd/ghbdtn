@@ -26,6 +26,7 @@ pub struct RawKey {
     pub win: bool,
     pub eaten: bool,
     pub held: bool,
+    pub at: std::time::Instant,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -48,6 +49,13 @@ pub static LAST_TICK: AtomicU32 = AtomicU32::new(0);
 pub static HOOK_THREAD: AtomicU32 = AtomicU32::new(0);
 pub static LANG: AtomicU8 = AtomicU8::new(0);
 pub static ACCEPT_INJECTED: AtomicBool = AtomicBool::new(false);
+pub static EVENTS: AtomicU64 = AtomicU64::new(0);
+pub static DROPPED: AtomicU64 = AtomicU64::new(0);
+pub static REPLAYED: AtomicU64 = AtomicU64::new(0);
+pub static REINSTALLS: AtomicU64 = AtomicU64::new(0);
+pub static FIXES: AtomicU64 = AtomicU64::new(0);
+pub static FIX_US_TOTAL: AtomicU64 = AtomicU64::new(0);
+pub static FIX_US_MAX: AtomicU64 = AtomicU64::new(0);
 static EATEN: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 static SENDER: OnceLock<Sender<HookEvent>> = OnceLock::new();
 
@@ -134,7 +142,10 @@ fn down(vk: VIRTUAL_KEY) -> bool {
 
 fn push(ev: HookEvent) {
     if let Some(tx) = SENDER.get() {
-        let _ = tx.try_send(ev);
+        EVENTS.fetch_add(1, SeqCst);
+        if tx.try_send(ev).is_err() {
+            DROPPED.fetch_add(1, SeqCst);
+        }
     }
 }
 
@@ -174,6 +185,7 @@ fn on_key(kb: &KBDLLHOOKSTRUCT) -> bool {
         win: down(VK_LWIN) || down(VK_RWIN),
         eaten: false,
         held: false,
+        at: std::time::Instant::now(),
     };
     if up && take_eaten(vk) {
         k.eaten = true;
@@ -310,6 +322,9 @@ fn post(msg: u32) {
 }
 
 pub fn reinstall() {
+    if HOOK_THREAD.load(SeqCst) != 0 {
+        REINSTALLS.fetch_add(1, SeqCst);
+    }
     post(WM_REINSTALL);
 }
 

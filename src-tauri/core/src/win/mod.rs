@@ -345,10 +345,12 @@ impl Worker {
             }
         };
         drain(self, &mut replay);
+        hook::REPLAYED.fetch_add(replay.len() as u64, SeqCst);
         output::replay(&replay);
         replay.clear();
         HOLD.store(false, SeqCst);
         drain(self, &mut replay);
+        hook::REPLAYED.fetch_add(replay.len() as u64, SeqCst);
         output::replay(&replay);
     }
 
@@ -365,7 +367,7 @@ impl Worker {
             } else if vk == VK_BACK {
                 self.undo(&k);
             } else if vk == VK_RETURN {
-                self.finish(Separator::Enter, true);
+                self.finish(Separator::Enter, true, k.at);
             } else {
                 self.convert();
             }
@@ -390,7 +392,7 @@ impl Worker {
             return;
         }
         if vk == VK_RETURN {
-            self.finish(Separator::Enter, false);
+            self.finish(Separator::Enter, false, k.at);
             return;
         }
         let (status, _) = if self.word.is_empty() { self.evaluate() } else { (self.status.unwrap_or(Status::Working), Mode::Normal) };
@@ -407,7 +409,7 @@ impl Worker {
         };
         let key = Key::new(k.scan, k.shift, self.caps);
         if let Some(sep) = separator_kind(key, lang) {
-            self.finish(sep, false);
+            self.finish(sep, false, k.at);
             return;
         }
         if char_of(k.scan, k.shift, self.caps, lang).is_some() {
@@ -431,7 +433,7 @@ impl Worker {
         }
     }
 
-    fn finish(&mut self, sep: Separator, enter_eaten: bool) {
+    fn finish(&mut self, sep: Separator, enter_eaten: bool, started: Instant) {
         let glued = std::mem::take(&mut self.glued);
         let edit = self.edit.take();
         let tail = self.tail.take();
@@ -483,6 +485,10 @@ impl Worker {
                 let typed_all = prev_typed + &fix.typed;
                 let result_all = prev_out + &fix.text;
                 output::rewrite(&(typed_all.clone() + &sep_typed), &(result_all.clone() + &sep_out));
+                let us = started.elapsed().as_micros() as u64;
+                hook::FIXES.fetch_add(1, SeqCst);
+                hook::FIX_US_TOTAL.fetch_add(us, SeqCst);
+                hook::FIX_US_MAX.fetch_max(us, SeqCst);
                 if fix.to.is_some() {
                     lang::switch(to);
                     hook::set_lang(Some(to));

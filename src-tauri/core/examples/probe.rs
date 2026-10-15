@@ -1,7 +1,9 @@
 use ghbdtn_core::{dict::Dictionaries, keymap::Lang};
 
 fn main() {
+    let t = std::time::Instant::now();
     let d = Dictionaries::load();
+    eprintln!("load {:?}", t.elapsed());
     for arg in std::env::args().skip(1).filter(|w| !w.is_empty()) {
         let (prev, w) = match arg.split_once('+') {
             Some((p, w)) => (Some(p), w),

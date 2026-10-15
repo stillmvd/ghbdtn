@@ -161,6 +161,19 @@ fn main() {
     failed += !ok as i32;
     println!("{} pause → {:?}", if ok { "OK  " } else { "FAIL" }, got);
 
+    let fixes = hook::FIXES.load(SeqCst);
+    let max_ms = hook::FIX_US_MAX.load(SeqCst) as f64 / 1000.0;
+    let dropped = hook::DROPPED.load(SeqCst);
+    report(
+        &mut failed,
+        fixes > 0 && max_ms < 150.0 && dropped == 0 && hook::REINSTALLS.load(SeqCst) == 0,
+        format!(
+            "скорость: исправлений {fixes}, ср {:.1} мс, макс {max_ms:.1} мс, потеряно {dropped}, переотправлено {}",
+            hook::FIX_US_TOTAL.load(SeqCst).checked_div(fixes).unwrap_or(0) as f64 / 1000.0,
+            hook::REPLAYED.load(SeqCst)
+        ),
+    );
+
     clear(np);
     lang::switch(Lang::En);
     std::thread::sleep(Duration::from_millis(200));
@@ -222,6 +235,9 @@ fn main() {
     type_text(np, "ghbdtn ", Lang::En);
     let got = text_of(np);
     report(&mut failed, got == "hello привет ", format!("двойной пробел ⌫ → {got:?}"));
+
+    let dropped = hook::DROPPED.load(SeqCst);
+    report(&mut failed, dropped == 0 && hook::REINSTALLS.load(SeqCst) == 0, format!("всего: потеряно {dropped}, переустановок {}", hook::REINSTALLS.load(SeqCst)));
 
     while let Ok(ev) = rx.try_recv() {
         if let CoreEvent::Status(s) = ev {

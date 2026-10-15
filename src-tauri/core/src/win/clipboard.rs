@@ -26,15 +26,28 @@ pub fn copy_selection() -> Option<(String, Option<String>)> {
     Some((text, saved))
 }
 
+fn put(text: &str) -> bool {
+    let Ok(_open) = clipboard_win::Clipboard::new_attempts(10) else { return false };
+    if clipboard_win::raw::set_string(text).is_err() {
+        return false;
+    }
+    for name in ["ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"] {
+        if let Some(f) = clipboard_win::raw::register_format(name) {
+            let _ = clipboard_win::raw::set_without_clear(f.get(), &0u32.to_le_bytes());
+        }
+    }
+    true
+}
+
 pub fn paste(text: &str, saved: Option<String>) {
-    if clipboard_win::set_clipboard_string(text).is_err() {
+    if !put(text) {
         return;
     }
     output::chord(VK_CONTROL, VK_V);
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(300));
         if let Some(s) = saved {
-            let _ = clipboard_win::set_clipboard_string(&s);
+            put(&s);
         }
     });
 }
