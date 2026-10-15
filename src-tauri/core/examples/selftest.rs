@@ -1,0 +1,217 @@
+use ghbdtn_core::keymap::{key_of, Lang};
+use ghbdtn_core::win::{hook, lang, CoreEvent, Engine};
+use std::sync::atomic::Ordering::SeqCst;
+use std::time::Duration;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::UI::Input::KeyboardAndMouse::*;
+use windows::Win32::UI::WindowsAndMessaging::*;
+
+fn input(vk: u16, scan: u16, up: bool) -> INPUT {
+    let mut flags = if scan != 0 { KEYEVENTF_SCANCODE } else { KEYBD_EVENT_FLAGS(0) };
+    if up {
+        flags |= KEYEVENTF_KEYUP;
+    }
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VIRTUAL_KEY(vk), wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: 0 } },
+    }
+}
+
+static GAP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(25);
+
+fn send(i: &[INPUT]) {
+    unsafe { SendInput(i, std::mem::size_of::<INPUT>() as i32) };
+    std::thread::sleep(Duration::from_millis(GAP.load(SeqCst)));
+}
+
+fn clear(np: HWND) {
+    tap_vk(np, &[VK_CONTROL, VK_A]);
+    tap_vk(np, &[VK_DELETE]);
+}
+
+fn report(failed: &mut i32, ok: bool, line: String) {
+    *failed += !ok as i32;
+    println!("{} {line}", if ok { "OK  " } else { "FAIL" });
+}
+
+fn guard(target: HWND) {
+    if unsafe { GetForegroundWindow() } != target {
+        eprintln!("ABORT: фокус ушёл из Блокнота");
+        std::process::exit(2);
+    }
+}
+
+fn type_text(target: HWND, text: &str, lang: Lang) {
+    for c in text.chars() {
+        guard(target);
+        let (scan, shift) = key_of(c, lang).expect("char");
+        if shift {
+            send(&[input(0, 0x2A, false)]);
+        }
+        send(&[input(0, scan, false), input(0, scan, true)]);
+        if shift {
+            send(&[input(0, 0x2A, true)]);
+        }
+    }
+    std::thread::sleep(Duration::from_millis(700));
+}
+
+fn tap_vk(target: HWND, vks: &[VIRTUAL_KEY]) {
+    guard(target);
+    let mut v: Vec<INPUT> = vks.iter().map(|k| input(k.0, 0, false)).collect();
+    v.extend(vks.iter().rev().map(|k| input(k.0, 0, true)));
+    send(&v);
+    std::thread::sleep(Duration::from_millis(700));
+}
+
+fn text_of(top: HWND) -> String {
+    unsafe extern "system" fn find(child: HWND, lp: LPARAM) -> windows::core::BOOL {
+        let out = &mut *(lp.0 as *mut HWND);
+        let mut buf = [0u16; 64];
+        let n = GetClassNameW(child, &mut buf);
+        let class = String::from_utf16_lossy(&buf[..n as usize]);
+        if class.starts_with("RichEdit") || class == "Edit" {
+            *out = child;
+            return false.into();
+        }
+        true.into()
+    }
+    unsafe {
+        let mut edit = HWND::default();
+        let _ = EnumChildWindows(Some(top), Some(find), LPARAM(&mut edit as *mut _ as isize));
+        let mut buf = vec![0u16; 4096];
+        let n = SendMessageW(edit, WM_GETTEXT, Some(WPARAM(buf.len())), Some(LPARAM(buf.as_mut_ptr() as isize))).0;
+        String::from_utf16_lossy(&buf[..n as usize])
+    }
+}
+
+fn find_notepad(file: &str) -> HWND {
+    for _ in 0..50 {
+        std::thread::sleep(Duration::from_millis(200));
+        let hwnd = unsafe { GetForegroundWindow() };
+        let mut buf = [0u16; 256];
+        let n = unsafe { GetWindowTextW(hwnd, &mut buf) };
+        if String::from_utf16_lossy(&buf[..n as usize]).contains(file) {
+            return hwnd;
+        }
+    }
+    eprintln!("ABORT: Блокнот не стал активным");
+    std::process::exit(2);
+}
+
+fn main() {
+    let dir = std::env::temp_dir().join("ghbdtn-selftest");
+    let _ = std::fs::create_dir_all(&dir);
+    let cfg_path = dir.join("config.toml");
+    let _ = std::fs::remove_file(&cfg_path);
+    let file = "ghbdtn-selftest.txt";
+    let doc = dir.join(file);
+    std::fs::write(&doc, "").unwrap();
+    hook::ACCEPT_INJECTED.store(true, SeqCst);
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let _engine = Engine::start(cfg_path, tx);
+    std::process::Command::new("notepad.exe").arg(&doc).spawn().unwrap();
+    let np = find_notepad(file);
+    std::thread::sleep(Duration::from_millis(500));
+
+    let cases: &[(&str, Lang, &str)] = &[
+        ("ghbdtn vbh ", Lang::En, "привет мир "),
+        ("сщву ", Lang::Ru, "code "),
+        ("ghbdtn? ", Lang::En, "привет, "),
+        ("ввожа клавиатра ", Lang::Ru, "ввода клавиатура "),
+        ("чето ", Lang::Ru, "чё-то "),
+        ("hello ", Lang::En, "hello "),
+        ("in english b lf;t ", Lang::En, "in english и даже "),
+        ("пкфафтф ", Lang::Ru, "grafana "),
+        ("приверяю ", Lang::Ru, "проверяю "),
+    ];
+    let mut failed = 0;
+    for (input_text, l, want) in cases {
+        tap_vk(np, &[VK_CONTROL, VK_A]);
+        tap_vk(np, &[VK_DELETE]);
+        lang::switch(*l);
+        std::thread::sleep(Duration::from_millis(200));
+        type_text(np, input_text, *l);
+        let got = text_of(np);
+        let ok = got == *want;
+        failed += !ok as i32;
+        println!("{} {:?} → {:?} (ждали {:?})", if ok { "OK  " } else { "FAIL" }, input_text, got, want);
+    }
+
+    tap_vk(np, &[VK_CONTROL, VK_A]);
+    tap_vk(np, &[VK_DELETE]);
+    lang::switch(Lang::En);
+    std::thread::sleep(Duration::from_millis(200));
+    type_text(np, "ghbdtn ", Lang::En);
+    tap_vk(np, &[VK_CONTROL, VK_BACK]);
+    let got = text_of(np);
+    let ok = got == "ghbdtn " && lang::current() == Some(Lang::En);
+    failed += !ok as i32;
+    println!("{} undo → {:?}, раскладка {:?}", if ok { "OK  " } else { "FAIL" }, got, lang::current());
+
+    tap_vk(np, &[VK_CONTROL, VK_A]);
+    tap_vk(np, &[VK_DELETE]);
+    type_text(np, "ye ", Lang::En);
+    tap_vk(np, &[VK_PAUSE]);
+    let got = text_of(np);
+    let ok = got == "ну ";
+    failed += !ok as i32;
+    println!("{} pause → {:?}", if ok { "OK  " } else { "FAIL" }, got);
+
+    clear(np);
+    lang::switch(Lang::En);
+    std::thread::sleep(Duration::from_millis(200));
+    GAP.store(2, SeqCst);
+    type_text(np, "ghbdtn vbh ghbdtn ", Lang::En);
+    GAP.store(25, SeqCst);
+    let got = text_of(np);
+    report(&mut failed, got == "привет мир привет ", format!("быстро 2 мс → {got:?}"));
+
+    clear(np);
+    lang::switch(Lang::En);
+    std::thread::sleep(Duration::from_millis(200));
+    type_text(np, "ye ye", Lang::En);
+    tap_vk(np, &[VK_CONTROL, VK_A]);
+    tap_vk(np, &[VK_PAUSE]);
+    let got = text_of(np);
+    report(&mut failed, got == "ну ну", format!("выделение+Pause → {got:?}"));
+
+    for round in 1..=2 {
+        clear(np);
+        lang::switch(Lang::En);
+        std::thread::sleep(Duration::from_millis(200));
+        type_text(np, "jxtym ", Lang::En);
+        let fixed = text_of(np);
+        tap_vk(np, &[VK_CONTROL, VK_BACK]);
+        let got = text_of(np);
+        report(&mut failed, fixed == "очень " && got == "jxtym ", format!("отмена {round}: {fixed:?} → {got:?}"));
+    }
+    clear(np);
+    lang::switch(Lang::En);
+    std::thread::sleep(Duration::from_millis(200));
+    type_text(np, "jxtym ", Lang::En);
+    let got = text_of(np);
+    report(&mut failed, got == "jxtym ", format!("после двух отмен не трогает → {got:?}"));
+
+    clear(np);
+    lang::switch(Lang::En);
+    std::thread::sleep(Duration::from_millis(200));
+    type_text(np, "ghbdtn", Lang::En);
+    tap_vk(np, &[VK_RETURN]);
+    let got = text_of(np);
+    report(&mut failed, got.trim_end() == "привет" && got.ends_with(['\r', '\n']), format!("Enter → {got:?}"));
+
+    while let Ok(ev) = rx.try_recv() {
+        if let CoreEvent::Status(s) = ev {
+            println!("status {s:?}");
+        }
+    }
+    tap_vk(np, &[VK_CONTROL, VK_A]);
+    tap_vk(np, &[VK_DELETE]);
+    tap_vk(np, &[VK_CONTROL, VK_S]);
+    std::thread::sleep(Duration::from_millis(300));
+    unsafe {
+        let _ = PostMessageW(Some(np), WM_CLOSE, WPARAM(0), LPARAM(0));
+    }
+    std::process::exit(failed);
+}
