@@ -1,4 +1,9 @@
+use crate::dict::Dictionaries;
 use crate::keymap::Lang;
+use crate::token::is_code_token;
+use crate::typo::near_freq;
+
+const LEARN_MIN: usize = 3;
 
 fn word_of(line: &str) -> Option<String> {
     let w = line.split('\t').next().unwrap_or("").trim().to_lowercase();
@@ -21,6 +26,17 @@ pub fn normalize(word: &str) -> Result<String, &'static str> {
         return Err("только русские или только английские буквы");
     }
     Ok(w)
+}
+
+pub fn learnable(core: &str, lang: Lang, dicts: &Dictionaries) -> Option<String> {
+    let word = core.to_lowercase();
+    let letters = word.chars().all(|c| lang.owns_letter(c) || c == '-') && !word.starts_with('-') && !word.ends_with('-');
+    let fresh = letters
+        && word.chars().count() >= LEARN_MIN
+        && !dicts.known(lang, &word)
+        && !is_code_token(core, false)
+        && near_freq(&word, lang, dicts).is_none();
+    fresh.then_some(word)
 }
 
 pub fn add(text: &str, word: &str) -> String {
@@ -48,6 +64,18 @@ mod tests {
         assert_eq!(list(&add(text, "дебаунс")), ["виджет", "stillmvd", "дебаунс"]);
         assert_eq!(remove(text, "виджет"), "# шапка\nstillmvd\n");
         assert_eq!(add("ревью", "проп"), "ревью\nпроп\n");
+    }
+
+    #[test]
+    fn learns_only_fresh_words() {
+        let d = Dictionaries::load();
+        assert_eq!(learnable("гхбдтн", Lang::Ru, &d).as_deref(), Some("гхбдтн"));
+        assert_eq!(learnable("Шадрин", Lang::Ru, &d).as_deref(), Some("шадрин"));
+        assert_eq!(learnable("привет", Lang::Ru, &d), None);
+        assert_eq!(learnable("привте", Lang::Ru, &d), None);
+        assert_eq!(learnable("ок", Lang::Ru, &d), None);
+        assert_eq!(learnable("getUserName", Lang::En, &d), None);
+        assert_eq!(learnable("-флаг", Lang::Ru, &d), None);
     }
 
     #[test]

@@ -387,6 +387,17 @@ fn pump(app: AppHandle, s: S, rx: crossbeam_channel::Receiver<CoreEvent>) {
                 refresh(&s);
                 let _ = app.emit("status", ());
             }
+            CoreEvent::WordLearned(word) => {
+                let added = edit_words(&s, |text| {
+                    if words::list(text).contains(&word) {
+                        return Err(String::new());
+                    }
+                    Ok(words::add(text, &word))
+                });
+                if added.is_ok() {
+                    let _ = app.emit("words-changed", ());
+                }
+            }
             CoreEvent::NeverAdded(_) | CoreEvent::ConfigChanged => {
                 let _ = app.emit("config-changed", s.engine.config());
             }

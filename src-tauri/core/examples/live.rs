@@ -40,6 +40,7 @@ fn main() {
             CoreEvent::Retyped { fix, .. } => println!("retyped{}", if fix.is_some() { " after fix" } else { "" }),
             CoreEvent::Status(s) => println!("status: {s:?} ({})", ghbdtn_core::win::context::current().exe),
             CoreEvent::NeverAdded(_) => println!("never +1"),
+            CoreEvent::WordLearned(_) => println!("learned +1"),
             CoreEvent::ConfigChanged => println!("config saved"),
             CoreEvent::HookReinstalled => println!("hook reinstalled"),
         }

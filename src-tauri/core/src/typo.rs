@@ -42,6 +42,7 @@ const VERB_ENDS: &[&str] = &[
 const PREFIXED_MIN: usize = 5;
 const JOINT_LEAD: f32 = 1.5;
 const SPLIT_MIN: usize = 5;
+const FAR_BEATS_LONE: u32 = 1000;
 const SPLIT_LONG_LEFT: usize = 6;
 const SPLIT_OVER: u32 = 3;
 const AFTER_NUMBER: &[&str] = &[
@@ -439,10 +440,19 @@ pub fn fix_after(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionari
         .collect();
     scored.sort_by(|a, b| b.0.total_cmp(&a.0));
     if !scored.iter().any(|(_, c)| solid(c, lang, dicts)) {
+        let weight = |s: f32, c: &str| ((dicts.freq(lang, c).max(1) as f32).ln() - s) / 4.0;
+        let typical: Vec<&str> = scored.iter().filter(|(s, c)| weight(*s, c) <= MAX_WEIGHT + 1e-3).map(|(_, c)| c.as_str()).collect();
+        let far = far_fix(typed, &chars, prev, lang, dicts).filter(|c| typed_freq == 0 || dicts.freq(lang, &c.to_lowercase()) >= OUTRANK * typed_freq);
+        let far_strong = far.as_ref().is_some_and(|c| dicts.freq(lang, &c.to_lowercase()) >= FAR_BEATS_LONE);
+        if let [one] = typical.as_slice() {
+            if typed_freq == 0 && !capital && !far_strong {
+                return Some(apply_case(typed, one));
+            }
+        }
         if let Some(split) = split_fix(&chars, lang, dicts) {
             return Some(apply_case(typed, &split));
         }
-        return far_fix(typed, &chars, prev, lang, dicts).filter(|c| typed_freq == 0 || dicts.freq(lang, &c.to_lowercase()) >= OUTRANK * typed_freq);
+        return far;
     }
     let (best, _) = scored.first()?;
     let close: Vec<&str> = scored.iter().take_while(|(s, _)| best - s < GAP).map(|(_, c)| c.as_str()).collect();
@@ -500,6 +510,8 @@ mod tests {
         assert_eq!(fix_after("ofthe", None, Lang::En, dicts()).as_deref(), Some("of the"));
         assert_eq!(f("сколько", None), None);
         assert_eq!(f("иам", None).as_deref(), Some("там"));
+        assert_eq!(f("косячки", None), None);
+        assert_eq!(f("косячкеи", None).as_deref(), Some("косячки"));
         for w in ["iphone", "ebay", "imac", "ipad", "awesome", "outfit"] {
             assert_eq!(fix_after(w, None, Lang::En, dicts()), None, "{w}");
         }

@@ -19,6 +19,7 @@ pub struct Dictionaries {
     ru_by_first: ByFirst,
     ru_ids: HashMap<Box<str>, u32>,
     en_ids: HashMap<Box<str>, u32>,
+    ru_forms: fst::Set<&'static [u8]>,
 }
 
 type ByFirst = HashMap<char, Vec<(Box<[char]>, u32)>>;
@@ -84,7 +85,8 @@ impl Dictionaries {
         let ru_freq = parse_freq(include_str!("../data/ru.freq"));
         let ids = |text: &str| text.lines().enumerate().map(|(i, w)| (w.into(), i as u32)).collect();
         let (ru_ids, en_ids) = (ids(include_str!("../data/ru.bigram.words")), ids(include_str!("../data/en.bigram.words")));
-        Dictionaries { ru, en, ru_by_first: by_first(&ru_freq), ru_freq, en_freq, extra: HashSet::new(), ru_ids, en_ids }
+        let ru_forms = fst::Set::new(include_bytes!("../data/ru.forms.fst").as_slice()).expect("ru forms");
+        Dictionaries { ru, en, ru_by_first: by_first(&ru_freq), ru_freq, en_freq, extra: HashSet::new(), ru_ids, en_ids, ru_forms }
     }
 
     pub fn add_user_words(&mut self, text: &str) -> usize {
@@ -177,7 +179,7 @@ impl Dictionaries {
             return true;
         }
         let h = self.hunspell(lang);
-        h.check(word) || h.check(&lower)
+        h.check(word) || h.check(&lower) || (lang == Lang::Ru && min_freq <= KNOWN_FREQ && self.ru_forms.contains(lower.replace('ё', "е")))
     }
 
     pub fn known(&self, lang: Lang, word: &str) -> bool {

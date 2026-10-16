@@ -11,10 +11,11 @@ use crate::keymap::{char_of, convert_text, script_of, Lang};
 use crate::layout::{short_alongside, split_tail};
 use crate::undo::{Action, ActionKind, UndoBook};
 use crate::word::{render, separator_kind, Key, Separator, Word};
+use crate::words::learnable;
 use arc_swap::ArcSwap;
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender};
 use hook::{HookEvent, RawKey, ALLOWED, ARMED_UNDO, ENABLED, HOLD, PENDING};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::SeqCst;
@@ -25,6 +26,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
 const IDLE_RESET: Duration = Duration::from_secs(10);
 const WATCHDOG: Duration = Duration::from_secs(2);
+const LEARN_AT: u8 = 3;
+const LEARN_CAP: usize = 5000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SilentReason {
@@ -50,6 +53,7 @@ pub enum CoreEvent {
     Status(Status),
     Retyped { before: String, after: String, fix: Option<(String, String)> },
     NeverAdded(String),
+    WordLearned(String),
     ConfigChanged,
     HookReinstalled,
 }
@@ -138,6 +142,7 @@ struct Worker {
     edit: Option<Shown>,
     glued: bool,
     ctx: Option<String>,
+    learning: HashMap<String, u8>,
     book: UndoBook,
     caps: bool,
     backlog: VecDeque<HookEvent>,
@@ -185,6 +190,7 @@ impl Worker {
             edit: None,
             glued: false,
             ctx: None,
+            learning: HashMap::new(),
             book: UndoBook::default(),
             caps: unsafe { GetKeyState(VK_CAPITAL.0 as i32) } & 1 != 0,
             backlog: VecDeque::new(),
@@ -329,6 +335,21 @@ impl Worker {
             if HOLD.load(SeqCst) && self.backlog.is_empty() {
                 self.release(&rx);
             }
+        }
+    }
+
+    fn learn(&mut self, keys: &[Key], lang: Lang) {
+        let typed = render(keys, lang);
+        let Some(word) = learnable(split_tail(&typed, lang).0, lang, &self.dicts) else { return };
+        if self.learning.len() >= LEARN_CAP {
+            self.learning.clear();
+        }
+        let n = self.learning.entry(word.clone()).or_insert(0);
+        *n += 1;
+        if *n >= LEARN_AT {
+            self.learning.remove(&word);
+            self.dicts.add_user_words(&word);
+            self.emit(CoreEvent::WordLearned(word));
         }
     }
 
@@ -487,6 +508,7 @@ impl Worker {
             return;
         };
         if let Some(e) = edit.filter(|e| !e.text.is_empty() && e.text != e.before) {
+            self.learning.remove(&e.before.trim_end_matches(|c: char| !c.is_alphanumeric()).to_lowercase());
             self.emit(CoreEvent::Retyped { before: e.before, after: e.text, fix: e.fix });
         }
         let keys = self.word.take();
@@ -550,6 +572,11 @@ impl Worker {
             None => {
                 if enter_eaten {
                     output::enter();
+                }
+                if !cfg.learn {
+                    self.learning.clear();
+                } else if status == Status::Working && !glued && sep != Separator::Enter && (mode != Mode::Code || lang == Lang::Ru) {
+                    self.learn(&keys, lang);
                 }
                 if sep != Separator::Enter {
                     let shown = render(&keys, lang);

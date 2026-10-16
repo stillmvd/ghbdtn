@@ -131,7 +131,12 @@ function Dict() {
   const [words, setWords] = useState<string[] | null>(null);
   const [q, setQ] = useState("");
   const [err, setErr] = useState("");
-  useEffect(() => { api.getWords().then(setWords).catch((e) => setErr(String(e))); }, []);
+  useEffect(() => {
+    const load = () => { api.getWords().then(setWords).catch((e) => setErr(String(e))); };
+    load();
+    const off = listen("words-changed", load);
+    return () => { off.then((f) => f()); };
+  }, []);
   const run = (p: Promise<string[]>) => p.then((w) => { setWords(w); setErr(""); }, (e) => setErr(String(e)));
   const needle = q.trim().toLowerCase();
   const all = words ?? [];

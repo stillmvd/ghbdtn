@@ -6,6 +6,7 @@ export type Config = {
   enabled: boolean;
   autostart: boolean;
   journal: boolean;
+  learn: boolean;
   features: { layout: boolean; typos: boolean; replace: boolean };
   signals: { hint: boolean; blink: boolean; sound: boolean; cursor: boolean };
   hotkeys: { convert: string; toggle: string };

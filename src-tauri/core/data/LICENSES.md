@@ -4,6 +4,7 @@
 |---|---|---|
 | `ru.aff`, `ru.dic` | Hunspell ru_RU, © 1997–2008 Alexander I. Lebedev, через [wooorm/dictionaries](https://github.com/wooorm/dictionaries/tree/main/dictionaries/ru) | BSD-подобная (см. текст лицензии в репозитории источника) |
 | `en.aff`, `en.dic` | Hunspell en_US из SCOWL, © Kevin Atkinson и др., через [wooorm/dictionaries](https://github.com/wooorm/dictionaries/tree/main/dictionaries/en) | permissive (SCOWL copyright) |
+| `ru.forms.fst` | словоформы словаря [OpenCorpora](https://opencorpora.org) (через пакет pymorphy3-dicts-ru 2.4.417150), собраны в FST | CC-BY-SA-3.0 |
 | `terms.txt` | [cspell-dicts](https://github.com/streetsidesoftware/cspell-dicts): software-terms, companies, fullstack, npm, node, python, rust, docker, k8s, aws, golang, typescript | MIT |
 | `tech.txt`, `ru-it.dic` | составлены для Ghbdtn | как у проекта |
 | `ru.bigram`, `ru.bigram.words`, `en.bigram`, `en.bigram.words` | пары соседних слов, посчитаны `examples/bigrams.rs` из [Leipzig Corpora Collection](https://wortschatz.uni-leipzig.de/en/download) rus-ru_web-public_2019_1M, rus_news_2024_1M, eng-com_web-public_2018_1M, eng_news_2024_1M (D. Goldhahn, T. Eckart, U. Quasthoff, LREC 2012) | CC BY |
