@@ -107,4 +107,4 @@
 
 - [ ] T036 Стенд по установленной сборке (`GHBDTN_ACCEPT_TEST_INPUT=1`): SC-001…SC-003 → `bench/final.jsonl`
 - [ ] T037 Ручные проверки: сон/разблокировка, Telegram, Word, консоль, игра; обновить `quickstart`
-- [ ] T038 `pnpm release` — с согласия пользователя
+- [x] T038 `pnpm release` — с согласия пользователя
