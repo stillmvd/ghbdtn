@@ -5,7 +5,7 @@ pub mod lang;
 pub mod output;
 
 use crate::config::{Config, Mode, NeverSource};
-use crate::decide::{decide, WordInput};
+use crate::decide::{decide, Rule, WordInput};
 use crate::dict::Dictionaries;
 use crate::keymap::{char_of, convert_text, script_of, Lang};
 use crate::layout::{short_alongside, split_tail};
@@ -48,7 +48,7 @@ pub enum Status {
 
 #[derive(Clone, Debug)]
 pub enum CoreEvent {
-    Acted { kind: ActionKind, typed: String, result: String },
+    Acted { kind: ActionKind, rule: Option<Rule>, typed: String, result: String },
     Undone,
     Status(Status),
     Retyped { before: String, after: String, fix: Option<(String, String)> },
@@ -563,7 +563,7 @@ impl Worker {
                     });
                     ARMED_UNDO.store(true, SeqCst);
                 }
-                self.emit(CoreEvent::Acted { kind: fix.kind, typed: fix.typed.clone(), result: fix.text.clone() });
+                self.emit(CoreEvent::Acted { kind: fix.kind, rule: Some(fix.rule), typed: fix.typed.clone(), result: fix.text.clone() });
                 self.last = None;
                 if sep != Separator::Enter {
                     self.tail = Some(Shown { text: fix.text.clone() + &sep_out, before: fix.text.clone(), keys: None, fix: Some((fix.typed.clone(), fix.text.clone())), glued: false });
@@ -645,7 +645,7 @@ impl Worker {
             lang_after: to,
         });
         ARMED_UNDO.store(true, SeqCst);
-        self.emit(CoreEvent::Acted { kind: ActionKind::Manual, typed, result });
+        self.emit(CoreEvent::Acted { kind: ActionKind::Manual, rule: None, typed, result });
     }
 
     fn convert_selection(&mut self) {
@@ -655,7 +655,7 @@ impl Worker {
         clipboard::paste(&result, saved);
         lang::switch(from.other());
         hook::set_lang(Some(from.other()));
-        self.emit(CoreEvent::Acted { kind: ActionKind::Manual, typed: text, result });
+        self.emit(CoreEvent::Acted { kind: ActionKind::Manual, rule: None, typed: text, result });
     }
 }
 

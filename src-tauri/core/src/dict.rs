@@ -19,7 +19,7 @@ pub struct Dictionaries {
     ru_by_first: ByFirst,
     ru_ids: HashMap<Box<str>, u32>,
     en_ids: HashMap<Box<str>, u32>,
-    ru_forms: fst::Set<&'static [u8]>,
+    ru_forms: Option<fst::Set<&'static [u8]>>,
 }
 
 type ByFirst = HashMap<char, Vec<(Box<[char]>, u32)>>;
@@ -32,6 +32,9 @@ fn by_first(freq: &HashMap<Box<str>, u32>) -> ByFirst {
                 out.entry(c).or_default().push((w.chars().collect(), f));
             }
         }
+    }
+    for list in out.values_mut() {
+        list.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     }
     out
 }
@@ -85,8 +88,13 @@ impl Dictionaries {
         let ru_freq = parse_freq(include_str!("../data/ru.freq"));
         let ids = |text: &str| text.lines().enumerate().map(|(i, w)| (w.into(), i as u32)).collect();
         let (ru_ids, en_ids) = (ids(include_str!("../data/ru.bigram.words")), ids(include_str!("../data/en.bigram.words")));
-        let ru_forms = fst::Set::new(include_bytes!("../data/ru.forms.fst").as_slice()).expect("ru forms");
+        let ru_forms = Some(fst::Set::new(include_bytes!("../data/ru.forms.fst").as_slice()).expect("ru forms"));
         Dictionaries { ru, en, ru_by_first: by_first(&ru_freq), ru_freq, en_freq, extra: HashSet::new(), ru_ids, en_ids, ru_forms }
+    }
+
+    pub fn without_forms(mut self) -> Dictionaries {
+        self.ru_forms = None;
+        self
     }
 
     pub fn add_user_words(&mut self, text: &str) -> usize {
@@ -179,7 +187,11 @@ impl Dictionaries {
             return true;
         }
         let h = self.hunspell(lang);
-        h.check(word) || h.check(&lower) || (lang == Lang::Ru && min_freq <= KNOWN_FREQ && self.ru_forms.contains(lower.replace('ё', "е")))
+        (min_freq <= KNOWN_FREQ && self.is_form(lang, &lower)) || h.check(word) || (lower != word && h.check(&lower))
+    }
+
+    pub fn is_form(&self, lang: Lang, word: &str) -> bool {
+        lang == Lang::Ru && self.ru_forms.as_ref().is_some_and(|f| f.contains(word.to_lowercase().replace('ё', "е")))
     }
 
     pub fn known(&self, lang: Lang, word: &str) -> bool {

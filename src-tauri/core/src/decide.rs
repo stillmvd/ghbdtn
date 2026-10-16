@@ -1,10 +1,10 @@
 use crate::config::Config;
 use crate::dict::Dictionaries;
 use crate::keymap::Lang;
-use crate::layout::{acronym, layout_after, short_pair, split_tail};
+use crate::layout::{acronym, layout_after, other_layout_word, short_pair, split_tail};
 use crate::replace::apply_case;
 use crate::token::is_code_token;
-use crate::typo::fix_after;
+use crate::typo::fix_rule;
 use crate::undo::ActionKind;
 use crate::word::{render, Key};
 
@@ -15,9 +15,63 @@ pub struct WordInput<'a> {
     pub prev: Option<&'a str>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Rule {
+    Replace,
+    Layout,
+    LayoutAfterShort,
+    ShortPair,
+    Acronym,
+    ShortFix,
+    SplitFix,
+    RealWord,
+    Lone,
+    Best,
+    Context,
+    Joint,
+    FarFix,
+}
+
+impl Rule {
+    pub const ALL: [Rule; 13] = [
+        Rule::Replace,
+        Rule::Layout,
+        Rule::LayoutAfterShort,
+        Rule::ShortPair,
+        Rule::Acronym,
+        Rule::ShortFix,
+        Rule::SplitFix,
+        Rule::RealWord,
+        Rule::Lone,
+        Rule::Best,
+        Rule::Context,
+        Rule::Joint,
+        Rule::FarFix,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Rule::Replace => "replace",
+            Rule::Layout => "layout",
+            Rule::LayoutAfterShort => "layout_after_short",
+            Rule::ShortPair => "short_pair",
+            Rule::Acronym => "acronym",
+            Rule::ShortFix => "short_fix",
+            Rule::SplitFix => "split_fix",
+            Rule::RealWord => "real_word",
+            Rule::Lone => "lone",
+            Rule::Best => "best",
+            Rule::Context => "context",
+            Rule::Joint => "joint",
+            Rule::FarFix => "far_fix",
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Fix {
     pub kind: ActionKind,
+    pub rule: Rule,
     pub typed: String,
     pub text: String,
     pub to: Option<Lang>,
@@ -29,22 +83,23 @@ pub fn decide(input: &WordInput, dicts: &Dictionaries, cfg: &Config) -> Option<F
     if core.is_empty() || cfg.is_never(core) {
         return None;
     }
-    let fix = |kind, text: String, to| Some(Fix { kind, typed: typed.clone(), text, to });
+    let fix = |kind, rule, text: String, to| Some(Fix { kind, rule, typed: typed.clone(), text, to });
     if cfg.features.replace {
         if let Some(r) = cfg.replacement(core) {
-            return fix(ActionKind::Replace, apply_case(core, r) + tail, None);
+            return fix(ActionKind::Replace, Rule::Replace, apply_case(core, r) + tail, None);
         }
     }
-    if cfg.features.layout && !(input.code_mode && is_code_token(core, true)) {
-        if let Some(text) = layout_after(input.keys, input.lang, input.prev, dicts)
-            .or_else(|| short_pair(input.keys, input.lang, input.prev, dicts))
-            .or_else(|| acronym(input.keys, input.lang, dicts)) {
-            return fix(ActionKind::Layout, text, Some(input.lang.other()));
+    let layout_on = cfg.features.layout && !(input.code_mode && is_code_token(core, true));
+    if layout_on {
+        if let Some((text, rule)) = layout_after(input.keys, input.lang, input.prev, dicts)
+            .or_else(|| short_pair(input.keys, input.lang, input.prev, dicts).map(|t| (t, Rule::ShortPair)))
+            .or_else(|| acronym(input.keys, input.lang, dicts).map(|t| (t, Rule::Acronym))) {
+            return fix(ActionKind::Layout, rule, text, Some(input.lang.other()));
         }
     }
     if cfg.features.typos && !is_code_token(core, input.code_mode) && !(input.code_mode && input.lang == Lang::En) {
-        if let Some(text) = fix_after(core, input.prev, input.lang, dicts) {
-            return fix(ActionKind::Typo, text + tail, None);
+        if let Some((text, rule)) = fix_rule(core, input.prev, input.lang, dicts).filter(|_| !(layout_on && other_layout_word(input.keys, input.lang, dicts))) {
+            return fix(ActionKind::Typo, rule, text + tail, None);
         }
     }
     None

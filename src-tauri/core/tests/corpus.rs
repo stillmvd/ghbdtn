@@ -1,10 +1,11 @@
 use ghbdtn_core::config::Config;
-use ghbdtn_core::decide::{decide, WordInput};
+use ghbdtn_core::decide::{decide, Rule, WordInput};
 use ghbdtn_core::dict::Dictionaries;
 use ghbdtn_core::keymap::Lang;
 use ghbdtn_core::typo::{adjacent, fix_after};
 use ghbdtn_core::undo::ActionKind;
-use ghbdtn_core::word::keys_for;
+use ghbdtn_core::word::{keys_for, render};
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 const TOP: usize = 10_000;
@@ -289,4 +290,205 @@ fn context_typos() {
 #[test]
 fn context_typos_en() {
     context_check(Lang::En, include_str!("ctx_pairs_en.txt"));
+}
+
+struct Case {
+    set: &'static str,
+    lang: Lang,
+    keys_lang: Lang,
+    prev: Option<String>,
+    typed: String,
+    expect: Option<String>,
+}
+
+fn moved_variants(words: &[String], dicts: &Dictionaries) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for w in words {
+        let c: Vec<char> = w.chars().collect();
+        if c.len() < 6 || w.contains('-') {
+            continue;
+        }
+        let a = 1 + out.len() % (c.len() - 3);
+        let mut v = c.clone();
+        let x = v.remove(a);
+        v.insert(a + 2, x);
+        let v: String = v.into_iter().collect();
+        if v != *w && !dicts.known(Lang::Ru, &v) {
+            out.push((v, w.clone()));
+        }
+    }
+    out
+}
+
+fn cases(dicts: &Dictionaries) -> Vec<Case> {
+    let mut out = Vec::new();
+    let case = |set, lang, keys_lang, prev: Option<&str>, typed: &str, expect: Option<&str>| Case {
+        set,
+        lang,
+        keys_lang,
+        prev: prev.map(String::from),
+        typed: typed.to_string(),
+        expect: expect.map(String::from),
+    };
+    for lang in [Lang::Ru, Lang::En] {
+        let words = top_words(lang);
+        for w in &words {
+            out.push(case("clean", lang, lang, None, w, None));
+            if w.chars().count() >= 3 {
+                out.push(case("layout", lang.other(), lang, None, w, Some(w)));
+            }
+            if w.chars().count() >= 5 && w.chars().all(|c| lang.owns_letter(c)) {
+                for v in typo_variants(w, lang).into_iter().filter(|v| !dicts.seen(lang, v)) {
+                    out.push(case("typo", lang, lang, None, &v, Some(w)));
+                }
+            }
+        }
+        let pairs = match lang {
+            Lang::Ru => include_str!("ctx_pairs.txt"),
+            Lang::En => include_str!("ctx_pairs_en.txt"),
+        };
+        for (prev, w) in pairs.lines().filter_map(|l| l.split_once(' ')) {
+            if w.chars().count() < 2 || w.contains(['-', '\'']) {
+                continue;
+            }
+            out.push(case("ctx_clean", lang, lang, Some(prev), w, None));
+            let prev_alt = render(&keys_for(prev, lang), lang.other());
+            out.push(case("layout_ctx", lang.other(), lang, Some(&prev_alt), w, Some(w)));
+            for v in ctx_variants(w, lang) {
+                if lang == Lang::Ru && v != w && dicts.known(lang, &v) && dicts.bigram(lang, prev, &v) == 0 {
+                    out.push(case("real_word", lang, lang, Some(prev), &v, Some(w)));
+                }
+                if dicts.seen(lang, &v) || (lang == Lang::En && v.chars().count() <= 3) {
+                    continue;
+                }
+                out.push(case("ctx_typo", lang, lang, Some(prev), &v, Some(w)));
+            }
+        }
+    }
+    let ru = top_words(Lang::Ru);
+    for w in &ru {
+        if let Some(v) = double_variant(w, Lang::Ru).filter(|v| !dicts.known(Lang::Ru, v)) {
+            out.push(case("double", Lang::Ru, Lang::Ru, None, &v, Some(w)));
+        }
+    }
+    for (v, w) in moved_variants(&ru, dicts) {
+        out.push(case("moved", Lang::Ru, Lang::Ru, None, &v, Some(&w)));
+    }
+    let forms = fst::Set::new(include_bytes!("../data/ru.forms.fst").as_slice()).unwrap();
+    let mut stream = forms.stream();
+    let mut i = 0usize;
+    while let Some(bytes) = fst::Streamer::next(&mut stream) {
+        i += 1;
+        let Ok(w) = std::str::from_utf8(bytes) else { continue };
+        if i.is_multiple_of(300) && w.chars().count() >= 4 && w.chars().all(|c| Lang::Ru.owns_letter(c)) && dicts.freq(Lang::Ru, w) == 0 {
+            out.push(case("rare_forms", Lang::Ru, Lang::Ru, None, w, None));
+        }
+    }
+    out
+}
+
+#[derive(Default, serde::Serialize)]
+struct Tally {
+    right: u32,
+    wrong: u32,
+    us: f64,
+    max_us: f64,
+    slowest: String,
+    samples: Vec<String>,
+}
+
+#[derive(Default, serde::Serialize)]
+struct SetTally {
+    total: u32,
+    right: u32,
+    wrong: u32,
+    missed: u32,
+    right_no_forms: u32,
+    wrong_no_forms: u32,
+}
+
+fn outcome(c: &Case, dicts: &Dictionaries, cfg: &Config) -> (Option<(Rule, String)>, f64) {
+    let keys = keys_for(&c.typed, c.keys_lang);
+    let input = WordInput { keys: &keys, lang: c.lang, code_mode: false, prev: c.prev.as_deref() };
+    let t = Instant::now();
+    let fix = decide(&input, dicts, cfg);
+    let us = t.elapsed().as_secs_f64() * 1e6;
+    (fix.map(|f| (f.rule, f.text)), us)
+}
+
+#[test]
+#[ignore]
+fn rule_stats() {
+    let dicts = Dictionaries::load();
+    let bare = Dictionaries::load().without_forms();
+    let cfg = config();
+    let cases = cases(&dicts);
+    let mut rules: BTreeMap<(&str, &str), Tally> = BTreeMap::new();
+    let mut sets: BTreeMap<String, SetTally> = BTreeMap::new();
+    let mut idle = (0u32, 0f64);
+    for c in &cases {
+        let set = sets.entry(format!("{}/{:?}", c.set, c.keys_lang)).or_default();
+        set.total += 1;
+        let (fix, us) = outcome(c, &dicts, &cfg);
+        let right = |text: &str| c.expect.as_deref() == Some(text);
+        match &fix {
+            Some((rule, text)) => {
+                let t = rules.entry((rule.name(), c.set)).or_default();
+                t.us += us;
+                if us > t.max_us {
+                    t.max_us = us;
+                    t.slowest = c.typed.clone();
+                }
+                if right(text) {
+                    t.right += 1;
+                    set.right += 1;
+                } else {
+                    t.wrong += 1;
+                    set.wrong += 1;
+                    if t.samples.len() < 8 {
+                        let prev = c.prev.as_deref().map(|p| format!("{p} ")).unwrap_or_default();
+                        let want = c.expect.as_deref().map(|e| format!(" ({e})")).unwrap_or_default();
+                        t.samples.push(format!("{prev}{}→{text}{want}", c.typed));
+                    }
+                }
+            }
+            None => {
+                idle = (idle.0 + 1, idle.1 + us);
+                set.missed += c.expect.is_some() as u32;
+            }
+        }
+        if c.lang == Lang::Ru {
+            match outcome(c, &bare, &cfg).0 {
+                Some((_, text)) if right(&text) => set.right_no_forms += 1,
+                Some(_) => set.wrong_no_forms += 1,
+                None => {}
+            }
+        }
+    }
+    println!("{:<20} {:>8} {:>7} {:>7} {:>8} {:>8}", "rule", "fires", "right", "wrong", "avg µs", "max µs");
+    for rule in Rule::ALL {
+        let mine: Vec<(&&str, &Tally)> = rules.iter().filter(|((r, _), _)| *r == rule.name()).map(|((_, s), t)| (s, t)).collect();
+        let (right, wrong, us, max) = mine.iter().fold((0, 0, 0.0, 0f64), |a, (_, t)| (a.0 + t.right, a.1 + t.wrong, a.2 + t.us, a.3.max(t.max_us)));
+        let fires = right + wrong;
+        let avg = if fires > 0 { us / fires as f64 } else { 0.0 };
+        println!("{:<20} {fires:>8} {right:>7} {wrong:>7} {avg:>8.1} {max:>8.0}", rule.name());
+        for (set, t) in &mine {
+            println!("  {set:<18} {:>8} {:>7} {:>7} slowest {} {:.0}µs {:?}", t.right + t.wrong, t.right, t.wrong, t.slowest, t.max_us, t.samples);
+        }
+    }
+    println!("none {:>8} avg µs {:.1}", idle.0, idle.1 / idle.0.max(1) as f64);
+    for (name, s) in &sets {
+        println!(
+            "{name:<16} total {:>6} right {:>6} wrong {:>5} missed {:>6} | no forms right {:>6} wrong {:>5}",
+            s.total, s.right, s.wrong, s.missed, s.right_no_forms, s.wrong_no_forms
+        );
+    }
+    let json = serde_json::json!({
+        "rules": rules.iter().map(|((r, s), t)| serde_json::json!({"rule": r, "set": s, "tally": t})).collect::<Vec<_>>(),
+        "sets": sets,
+        "idle": {"count": idle.0, "us": idle.1},
+    });
+    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("rules.json");
+    std::fs::write(&path, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    println!("json {}", path.display());
 }

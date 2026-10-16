@@ -1,3 +1,4 @@
+use crate::decide::Rule;
 use crate::dict::Dictionaries;
 use crate::keymap::{key_of, Lang};
 use crate::layout::short_word;
@@ -134,6 +135,8 @@ struct Far<'a> {
     typed: &'a [char],
     extra: Vec<f32>,
     pos: HashMap<char, (f32, f32)>,
+    typed_pos: Vec<Option<(f32, f32)>>,
+    cand_pos: Vec<Option<(f32, f32)>>,
     rows: [Vec<f32>; 4],
 }
 
@@ -148,6 +151,8 @@ impl Far<'_> {
     fn distance(&mut self, cand: &[char], limit: f32) -> Option<f32> {
         let typed = self.typed;
         let (n, m) = (typed.len(), cand.len());
+        self.cand_pos.clear();
+        self.cand_pos.extend(cand.iter().map(|c| self.pos.get(c).copied()));
         const BAND: usize = 3;
         for r in &mut self.rows {
             r.clear();
@@ -179,7 +184,7 @@ impl Far<'_> {
                     let (a, b) = (typed[i - 1], cand[j - 1]);
                     let sub = if a == b {
                         0.0
-                    } else if self.pos.get(&a).zip(self.pos.get(&b)).is_some_and(|((ax, ay), (bx, by))| (ay - by).abs() <= 1.0 && (ax - bx).abs() <= 1.0) {
+                    } else if self.typed_pos[i - 1].zip(self.cand_pos[j - 1]).is_some_and(|((ax, ay), (bx, by))| (ay - by).abs() <= 1.0 && (ax - bx).abs() <= 1.0) {
                         0.5
                     } else {
                         1.0
@@ -215,8 +220,9 @@ fn far_fix(typed: &str, chars: &[char], prev: Option<&str>, lang: Lang, dicts: &
         return None;
     }
     let limit = if chars.len() >= LONG_WORD { FAR_LONG } else { FAR_SHORT };
-    let pos = lang.alphabet().chars().filter_map(|c| position(c, lang).map(|p| (c, p))).collect();
-    let mut far = Far { typed: chars, extra: Vec::new(), pos, rows: Default::default() };
+    let pos: HashMap<char, (f32, f32)> = lang.alphabet().chars().filter_map(|c| position(c, lang).map(|p| (c, p))).collect();
+    let typed_pos = chars.iter().map(|c| pos.get(c).copied()).collect();
+    let mut far = Far { typed: chars, extra: Vec::new(), pos, typed_pos, cand_pos: Vec::new(), rows: Default::default() };
     far.extra = (0..chars.len())
         .map(|i| {
             let c = chars[i];
@@ -232,19 +238,27 @@ fn far_fix(typed: &str, chars: &[char], prev: Option<&str>, lang: Lang, dicts: &
         })
         .collect();
     let mut scored: Vec<(f32, &[char])> = Vec::new();
+    let mut best = f32::NEG_INFINITY;
     for (w, f) in dicts.frequent_from(lang, chars[0]) {
+        let top = (*f as f32).ln();
+        if top < best - GAP {
+            break;
+        }
         if w.len().abs_diff(chars.len()) > 2 {
             continue;
         }
-        if let Some(dist) = far.distance(w, limit) {
-            scored.push(((*f as f32).ln() - 4.0 * dist, w));
+        let reach = limit.min((top - best + GAP) / 4.0);
+        if let Some(dist) = far.distance(w, reach) {
+            let s = top - 4.0 * dist;
+            best = best.max(s);
+            scored.push((s, w));
         }
     }
     scored.sort_by(|a, b| b.0.total_cmp(&a.0));
     let (best, _) = scored.first()?;
     let close: Vec<String> = scored.iter().take_while(|(s, _)| best - s < GAP).map(|(_, c)| c.iter().collect()).collect();
     let close: Vec<&str> = close.iter().map(String::as_str).collect();
-    pick(prev, &close, lang, dicts).filter(|c| solid(c, lang, dicts)).map(|c| apply_case(typed, c))
+    pick(prev, &close, lang, dicts).map(|(c, _)| c).filter(|c| solid(c, lang, dicts)).map(|c| apply_case(typed, c))
 }
 
 pub fn near_freq(typed: &str, lang: Lang, dicts: &Dictionaries) -> Option<u32> {
@@ -293,7 +307,8 @@ fn short_fix(typed: &str, chars: &[char], prev: Option<&str>, lang: Lang, dicts:
     let rank = |list: Vec<String>| -> Vec<(u32, String)> {
         list.into_iter().filter(|c| !c.contains('ё') || dicts.certain(lang, c)).map(|c| (dicts.freq(lang, &c), c)).filter(|(f, _)| *f >= floor).collect()
     };
-    let mut scored = if only_drop { Vec::new() } else { rank(cands) };
+    let drops_only = only_drop && dicts.known(lang, typed);
+    let mut scored = if drops_only { Vec::new() } else { rank(cands) };
     if scored.is_empty() {
         scored = rank(drops);
     }
@@ -314,7 +329,10 @@ fn short_fix(typed: &str, chars: &[char], prev: Option<&str>, lang: Lang, dicts:
     }
     let (best, _) = scored.first()?;
     let close: Vec<&str> = scored.iter().take_while(|(f, _)| (*best as f32 / *f as f32).ln() < SHORT_GAP).map(|(_, c)| c.as_str()).collect();
-    pick(prev, &close, lang, dicts).map(String::from)
+    pick(prev, &close, lang, dicts)
+        .map(|(c, _)| c)
+        .filter(|c| !drops_only || PARTICLES.contains(c) || prev.is_some_and(|p| dicts.bigram(lang, p, c) >= PAIR_MIN))
+        .map(String::from)
 }
 
 fn by_context<'a>(prev: Option<&str>, cands: &[&'a str], lang: Lang, dicts: &Dictionaries) -> Option<&'a str> {
@@ -331,11 +349,11 @@ fn by_context<'a>(prev: Option<&str>, cands: &[&'a str], lang: Lang, dicts: &Dic
     (top >= CTX_MIN && top >= ratio * second.max(1)).then_some(best)
 }
 
-fn pick<'a>(prev: Option<&str>, close: &[&'a str], lang: Lang, dicts: &Dictionaries) -> Option<&'a str> {
+fn pick<'a>(prev: Option<&str>, close: &[&'a str], lang: Lang, dicts: &Dictionaries) -> Option<(&'a str, Rule)> {
     match close {
         [] => None,
-        [one] => Some(one),
-        _ => by_context(prev, close, lang, dicts),
+        [one] => Some((one, Rule::Best)),
+        _ => by_context(prev, close, lang, dicts).map(|c| (c, Rule::Context)),
     }
 }
 
@@ -402,21 +420,25 @@ pub fn best_fix(typed: &str, lang: Lang, dicts: &Dictionaries) -> Option<String>
 }
 
 pub fn fix_after(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionaries) -> Option<String> {
+    fix_rule(typed, prev, lang, dicts).map(|f| f.0)
+}
+
+pub fn fix_rule(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionaries) -> Option<(String, Rule)> {
     let lower = typed.to_lowercase();
     let chars: Vec<char> = lower.chars().collect();
     if chars.len() < MIN_LEN {
-        return short_fix(typed, &chars, prev, lang, dicts);
+        return short_fix(typed, &chars, prev, lang, dicts).map(|t| (t, Rule::ShortFix));
     }
     if !chars.iter().all(|&c| lang.owns_letter(c) || c == '-') {
         return None;
     }
-    if dicts.known(lang, &lower) && !dicts.certain(lang, &lower) {
+    if dicts.known(lang, &lower) && !dicts.certain(lang, &lower) && !dicts.is_form(lang, &lower) {
         if let Some(split) = split_fix(&chars, lang, dicts) {
-            return Some(apply_case(typed, &split));
+            return Some((apply_case(typed, &split), Rule::SplitFix));
         }
     }
     if dicts.known(lang, typed) {
-        return real_word_fix(typed, &chars, prev, lang, dicts);
+        return real_word_fix(typed, &chars, prev, lang, dicts).map(|t| (t, Rule::RealWord));
     }
     if lang == Lang::Ru && prefixed_verb(&lower, dicts) {
         return None;
@@ -446,13 +468,13 @@ pub fn fix_after(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionari
         let far_strong = far.as_ref().is_some_and(|c| dicts.freq(lang, &c.to_lowercase()) >= FAR_BEATS_LONE);
         if let [one] = typical.as_slice() {
             if typed_freq == 0 && !capital && !far_strong {
-                return Some(apply_case(typed, one));
+                return Some((apply_case(typed, one), Rule::Lone));
             }
         }
         if let Some(split) = split_fix(&chars, lang, dicts) {
-            return Some(apply_case(typed, &split));
+            return Some((apply_case(typed, &split), Rule::SplitFix));
         }
-        return far;
+        return far.map(|t| (t, Rule::FarFix));
     }
     let (best, _) = scored.first()?;
     let close: Vec<&str> = scored.iter().take_while(|(s, _)| best - s < GAP).map(|(_, c)| c.as_str()).collect();
@@ -471,11 +493,11 @@ pub fn fix_after(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionari
         let second = joint.get(1).map_or(f32::NEG_INFINITY, |x| x.0);
         (ctx >= CTX_MIN && top - second >= JOINT_LEAD).then_some(word)
     };
-    let cand = pick(prev, &close, lang, dicts).or_else(agree).filter(|c| solid(c, lang, dicts))?;
+    let (cand, rule) = pick(prev, &close, lang, dicts).or_else(|| agree().map(|c| (c, Rule::Joint))).filter(|(c, _)| solid(c, lang, dicts))?;
     if typed_freq > 0 && dicts.freq(lang, cand) < OUTRANK * typed_freq {
         return None;
     }
-    Some(apply_case(typed, cand))
+    Some((apply_case(typed, cand), rule))
 }
 
 #[cfg(test)]
@@ -542,6 +564,7 @@ mod tests {
         assert_eq!(best_fix("чтл", Lang::Ru, dicts()).as_deref(), Some("что"));
         assert_eq!(best_fix("кка", Lang::Ru, dicts()).as_deref(), Some("как"));
         assert_eq!(best_fix("нкт", Lang::Ru, dicts()).as_deref(), Some("нет"));
+        assert_eq!(best_fix("ято", Lang::Ru, dicts()).as_deref(), Some("что"));
         for w in ["нк", "жк", "ыы", "спс", "мск", "спб", "лол", "кек", "ааа", "Чтл", "шдё", "щвё", "ьёз", "гёе"] {
             assert_eq!(best_fix(w, Lang::Ru, dicts()), None, "{w}");
         }

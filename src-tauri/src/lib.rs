@@ -357,9 +357,9 @@ fn pump(app: AppHandle, s: S, rx: crossbeam_channel::Receiver<CoreEvent>) {
             let app = s.app.lock().unwrap().as_ref().map(|a| a.exe.clone());
             let app = app.as_deref();
             match &ev {
-                CoreEvent::Acted { kind, typed, result } => {
+                CoreEvent::Acted { kind, rule, typed, result } => {
                     let kind = format!("{kind:?}").to_lowercase();
-                    s.journal.write(app, journal::Entry::Acted { kind: &kind, typed, result });
+                    s.journal.write(app, journal::Entry::Acted { kind: &kind, rule: rule.map(|r| r.name()), typed, result });
                 }
                 CoreEvent::Undone => s.journal.write(app, journal::Entry::Undo),
                 CoreEvent::Retyped { before, after, fix } => s.journal.write(

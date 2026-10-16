@@ -10,6 +10,8 @@ fn main() {
             None => (None, arg.as_str()),
         };
         let l = if w.chars().any(|c| c.is_ascii_alphabetic()) { Lang::En } else { Lang::Ru };
-        println!("{arg}: known={} freq={} fix={:?}", d.known(l, w), d.freq(l, w), ghbdtn_core::typo::fix_after(w, prev, l, &d));
+        let t = std::time::Instant::now();
+        let fix = ghbdtn_core::typo::fix_after(w, prev, l, &d);
+        println!("{arg}: known={} freq={} fix={fix:?} {:?}", d.known(l, w), d.freq(l, w), t.elapsed());
     }
 }

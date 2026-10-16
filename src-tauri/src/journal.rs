@@ -11,7 +11,13 @@ const DAY_BYTES: u64 = 1024 * 1024;
 #[derive(Serialize)]
 #[serde(tag = "ev", rename_all = "lowercase")]
 pub enum Entry<'a> {
-    Acted { kind: &'a str, typed: &'a str, result: &'a str },
+    Acted {
+        kind: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        rule: Option<&'a str>,
+        typed: &'a str,
+        result: &'a str,
+    },
     Undo,
     Retyped { before: &'a str, after: &'a str, fix: Option<(&'a str, &'a str)> },
     Never { word: &'a str },

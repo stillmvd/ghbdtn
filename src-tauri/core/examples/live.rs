@@ -35,7 +35,7 @@ fn main() {
         }
         let Ok(ev) = rx.recv_timeout(Duration::from_secs(1)) else { continue };
         match ev {
-            CoreEvent::Acted { kind, .. } => println!("{kind:?}"),
+            CoreEvent::Acted { kind, rule, .. } => println!("{kind:?} {}", rule.map_or("", |r| r.name())),
             CoreEvent::Undone => println!("undo"),
             CoreEvent::Retyped { fix, .. } => println!("retyped{}", if fix.is_some() { " after fix" } else { "" }),
             CoreEvent::Status(s) => println!("status: {s:?} ({})", ghbdtn_core::win::context::current().exe),

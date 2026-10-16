@@ -1,10 +1,11 @@
+use crate::decide::Rule;
 use crate::dict::Dictionaries;
 use crate::keymap::Lang;
+use crate::typo::near_freq;
 use crate::word::{keys_for, render, Key};
 
-use crate::typo::near_freq;
-
 const ALT_FREQ: u32 = 200;
+const SHORT_ALT_FREQ: u32 = 1000;
 const OVERRIDE_FREQ: u32 = 20_000;
 const NEAR_RATIO: u32 = 10;
 const PAIR_MIN: u32 = 10;
@@ -30,17 +31,27 @@ fn acceptable(core: &str, lang: Lang, dicts: &Dictionaries) -> bool {
         return false;
     }
     let freq = dicts.freq(lang, core);
+    if len == 3 && freq < SHORT_ALT_FREQ {
+        return false;
+    }
     if len <= 4 {
         return freq > 0 && dicts.known(lang, core);
     }
     dicts.certain(lang, core) || freq >= ALT_FREQ
 }
 
-pub fn decide_layout(keys: &[Key], lang: Lang, dicts: &Dictionaries) -> Option<String> {
-    layout_after(keys, lang, None, dicts)
+pub fn other_layout_word(keys: &[Key], lang: Lang, dicts: &Dictionaries) -> bool {
+    let alt = lang.other();
+    let full = render(keys, alt);
+    let (core, _) = split_tail(&full, alt);
+    acceptable(core, alt, dicts)
 }
 
-pub fn layout_after(keys: &[Key], lang: Lang, prev: Option<&str>, dicts: &Dictionaries) -> Option<String> {
+pub fn decide_layout(keys: &[Key], lang: Lang, dicts: &Dictionaries) -> Option<String> {
+    layout_after(keys, lang, None, dicts).map(|f| f.0)
+}
+
+pub fn layout_after(keys: &[Key], lang: Lang, prev: Option<&str>, dicts: &Dictionaries) -> Option<(String, Rule)> {
     let prev_alt = prev.and_then(|p| short_alongside(&keys_for(p, lang), lang));
     let typed = render(keys, lang);
     let (typed_core, _) = split_tail(&typed, lang);
@@ -67,7 +78,7 @@ pub fn layout_after(keys: &[Key], lang: Lang, prev: Option<&str>, dicts: &Dictio
     let alt_freq = dicts.freq(alt, &core);
     let lower = typed_core.to_lowercase();
     if prev_alt.is_some_and(|p| !dicts.known(lang, &lower) && dicts.bigram(alt, &p, &core.to_lowercase()) > 0) {
-        return Some(text);
+        return Some((text, Rule::LayoutAfterShort));
     }
     if dicts.seen(lang, typed_core) {
         let rare_form = dicts.freq(lang, typed_core) == 0 && alt_freq >= OVERRIDE_FREQ;
@@ -78,7 +89,7 @@ pub fn layout_after(keys: &[Key], lang: Lang, prev: Option<&str>, dicts: &Dictio
     if near_freq(typed_core, lang, dicts).is_some_and(|n| alt_freq < NEAR_RATIO.saturating_mul(n)) {
         return None;
     }
-    Some(text)
+    Some((text, Rule::Layout))
 }
 
 const SHORT_RU: &[&str] = &[
@@ -199,7 +210,7 @@ mod tests {
 
     #[test]
     fn short_word_before_sets_layout() {
-        let f = |t: &str, prev| layout_after(&keys_for(t, Lang::En), Lang::En, prev, dicts());
+        let f = |t: &str, prev| layout_after(&keys_for(t, Lang::En), Lang::En, prev, dicts()).map(|f| f.0);
         assert_eq!(f("botn", Some("yt")).as_deref(), Some("ищет"));
         assert_eq!(f("both", Some("yt")), None);
         assert_eq!(f("botn", Some("it")), None);
