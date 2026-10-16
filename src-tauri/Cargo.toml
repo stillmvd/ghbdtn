@@ -5,7 +5,7 @@ resolver = "2"
 
 [package]
 name = "ghbdtn"
-version = "0.2.0"
+version = "0.3.0"
 description = "Исправляет раскладку и опечатки на лету"
 authors = ["stillmvd"]
 edition = "2021"
