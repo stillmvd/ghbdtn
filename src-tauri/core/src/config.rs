@@ -88,6 +88,61 @@ impl Default for Processes {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Insert {
+    #[default]
+    Unicode,
+    Paste,
+    Keys,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Switch {
+    #[default]
+    Message,
+    Hotkey,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Program {
+    pub exe: String,
+    pub insert: Insert,
+    pub switch: Switch,
+    pub delay_ms: u32,
+    pub retries: u8,
+}
+
+impl Default for Program {
+    fn default() -> Self {
+        Program { exe: String::new(), insert: Insert::Unicode, switch: Switch::Message, delay_ms: 0, retries: 2 }
+    }
+}
+
+const PASTE: &[&str] = &["telegram", "whatsapp", "whatsapp.root", "viber", "icq", "lingvo"];
+const HOTKEY: &[&str] = &[
+    "devenv", "excel", "powerpnt", "outlook", "onenote", "zoom", "skype", "lync", "thunderbird", "afterfx",
+    "adobe premiere pro",
+];
+const KEYS: &[&str] = &["cmd", "powershell", "pwsh", "conhost"];
+const WORD_DELAY_MS: u32 = 30;
+pub const MAX_DELAY_MS: u32 = 500;
+pub const MAX_RETRIES: u8 = 5;
+
+fn default_programs() -> Vec<Program> {
+    let make = |names: &[&str], insert, switch| {
+        names.iter().map(move |n| Program { exe: format!("{n}.exe"), insert, switch, ..Program::default() }).collect::<Vec<_>>()
+    };
+    let mut v = make(PASTE, Insert::Paste, Switch::Message);
+    v.extend(make(HOTKEY, Insert::Unicode, Switch::Hotkey));
+    v.extend(make(KEYS, Insert::Keys, Switch::Message));
+    v.push(Program { exe: "winword.exe".into(), switch: Switch::Hotkey, delay_ms: WORD_DELAY_MS, ..Program::default() });
+    v.sort_by(|a, b| a.exe.cmp(&b.exe));
+    v
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Off,
@@ -108,6 +163,7 @@ pub struct Config {
     pub replacements: BTreeMap<String, String>,
     pub never: Vec<NeverWord>,
     pub processes: Processes,
+    pub programs: Vec<Program>,
 }
 
 impl Default for Config {
@@ -123,6 +179,7 @@ impl Default for Config {
             replacements: BTreeMap::from([("чето".to_string(), "чё-то".to_string())]),
             never: Vec::new(),
             processes: Processes::default(),
+            programs: default_programs(),
         }
     }
 }
@@ -191,6 +248,14 @@ impl Config {
         }
         let mut seen = std::collections::HashSet::new();
         self.never.retain(|n| !n.word.is_empty() && seen.insert(n.word.clone()));
+        for p in &mut self.programs {
+            p.exe = normalize_exe(&p.exe);
+            p.delay_ms = p.delay_ms.min(MAX_DELAY_MS);
+            p.retries = p.retries.clamp(1, MAX_RETRIES);
+        }
+        let mut seen = std::collections::HashSet::new();
+        self.programs.retain(|p| p.exe != ".exe" && seen.insert(p.exe.clone()));
+        self.programs.sort_by(|a, b| a.exe.cmp(&b.exe));
     }
 
     pub fn validate(&self) -> Result<(), Vec<ConfigError>> {
@@ -222,6 +287,11 @@ impl Config {
         } else {
             Mode::Normal
         }
+    }
+
+    pub fn program_for(&self, exe: &str) -> Program {
+        let exe = normalize_exe(exe);
+        self.programs.iter().find(|p| p.exe == exe).cloned().unwrap_or_default()
     }
 
     pub fn is_never(&self, word: &str) -> bool {
@@ -291,5 +361,30 @@ mod tests {
         cfg.normalize();
         assert_eq!(cfg.mode_for("notepad.exe"), Mode::Off);
         assert_eq!(cfg.replacement("Чето"), Some("чё-то"));
+    }
+
+    #[test]
+    fn programs() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.program_for("Telegram.exe").insert, Insert::Paste);
+        assert_eq!(cfg.program_for("devenv").switch, Switch::Hotkey);
+        let word = cfg.program_for("WINWORD.EXE");
+        assert_eq!((word.switch, word.delay_ms), (Switch::Hotkey, WORD_DELAY_MS));
+        assert_eq!(cfg.program_for("cmd.exe").insert, Insert::Keys);
+        assert_eq!(cfg.program_for("notepad.exe"), Program::default());
+        cfg.programs.push(Program { exe: "Notepad".into(), insert: Insert::Keys, delay_ms: 9000, retries: 0, ..Program::default() });
+        cfg.programs.push(Program { exe: "notepad.exe".into(), ..Program::default() });
+        cfg.normalize();
+        let n = cfg.program_for("notepad.exe");
+        assert_eq!((n.insert, n.delay_ms, n.retries), (Insert::Keys, MAX_DELAY_MS, 1));
+        assert_eq!(cfg.programs.iter().filter(|p| p.exe == "notepad.exe").count(), 1);
+    }
+
+    #[test]
+    fn old_config_gets_default_programs() {
+        let cfg: Config = toml::from_str("enabled = true").unwrap();
+        assert_eq!(cfg.programs, default_programs());
+        let text = toml::to_string_pretty(&Config::default()).unwrap();
+        assert!(text.contains("insert = \"paste\""));
     }
 }

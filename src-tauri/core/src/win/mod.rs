@@ -4,7 +4,7 @@ pub mod hook;
 pub mod lang;
 pub mod output;
 
-use crate::config::{Config, Mode, NeverSource};
+use crate::config::{Config, Mode, NeverSource, Program};
 use crate::decide::{decide, Fix, Rule, WordInput};
 use crate::early::early_fix;
 use crate::dict::Dictionaries;
@@ -156,6 +156,7 @@ struct Worker {
     batch: output::Batch,
     fix_started: Option<Instant>,
     mode: Mode,
+    program: Program,
     early: Option<Early>,
     early_pending: Option<(Fix, Instant, bool)>,
     status: Option<Status>,
@@ -213,6 +214,7 @@ impl Worker {
             batch: output::Batch::default(),
             fix_started: None,
             mode: Mode::Normal,
+            program: Program::default(),
             early: None,
             early_pending: None,
             status: None,
@@ -268,6 +270,8 @@ impl Worker {
         };
         ALLOWED.store(status == Status::Working, SeqCst);
         self.mode = mode;
+        self.program = cfg.program_for(&ctx.exe);
+        self.batch.insert = self.program.insert;
         if self.status != Some(status) {
             self.status = Some(status);
             self.emit(CoreEvent::Status(status));
@@ -330,6 +334,7 @@ impl Worker {
     }
 
     fn run(mut self, rx: Receiver<HookEvent>) {
+        self.batch.caps = self.caps;
         self.evaluate();
         loop {
             let ev = match rx.recv_timeout(Duration::from_millis(500)) {
@@ -464,6 +469,7 @@ impl Worker {
         }
         if vk == VK_CAPITAL {
             self.caps = !self.caps;
+            self.batch.caps = self.caps;
             return;
         }
         if is_modifier(vk) {
@@ -549,9 +555,7 @@ impl Worker {
             self.prev = None;
         }
         self.flush();
-        if let Some(thread) = lang::request(to) {
-            hook::SWITCH.time(|| lang::wait(to, thread));
-        }
+        hook::SWITCH.time(|| lang::switch_with(to, &self.program));
         hook::set_lang(Some(to));
         self.batch.rewrite(&(prev_typed.clone() + &fix.typed), &(prev_out.clone() + &fix.text));
         self.fix_started = Some(at);
@@ -630,9 +634,7 @@ impl Worker {
                 let result_all = prev_out + &fix.text;
                 self.flush();
                 if fix.to.is_some() {
-                    if let Some(thread) = lang::request(to) {
-                        hook::SWITCH.time(|| lang::wait(to, thread));
-                    }
+                    hook::SWITCH.time(|| lang::switch_with(to, &self.program));
                     hook::set_lang(Some(to));
                 }
                 self.batch.rewrite(&(typed_all.clone() + &sep_typed), &(result_all.clone() + &sep_out));
@@ -724,7 +726,7 @@ impl Worker {
         };
         self.flush();
         if action.lang_before != action.lang_after {
-            lang::switch(action.lang_before);
+            lang::switch_with(action.lang_before, &self.program);
             hook::set_lang(Some(action.lang_before));
         }
         self.batch.rewrite(&(action.result.clone() + &action.sep_after), &(action.typed.clone() + &action.sep_before));
@@ -766,7 +768,7 @@ impl Worker {
         let result = render(&keys, to);
         let sep_out = convert_text(&sep, lang);
         self.flush();
-        lang::switch(to);
+        lang::switch_with(to, &self.program);
         hook::set_lang(Some(to));
         self.batch.rewrite(&(typed.clone() + &sep), &(result.clone() + &sep_out));
         self.book.record(Action {
@@ -789,7 +791,7 @@ impl Worker {
         let Some(from) = script_of(&text) else { return };
         let result = convert_text(&text, from);
         clipboard::paste(&result, saved);
-        lang::switch(from.other());
+        lang::switch_with(from.other(), &self.program);
         hook::set_lang(Some(from.other()));
         self.emit(CoreEvent::Acted { kind: ActionKind::Manual, rule: None, typed: text, result });
     }

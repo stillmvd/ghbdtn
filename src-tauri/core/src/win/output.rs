@@ -1,4 +1,6 @@
 use super::hook::{RawKey, MARK};
+use super::{clipboard, lang};
+use crate::config::Insert;
 use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
@@ -29,10 +31,50 @@ fn held_modifiers() -> Vec<VIRTUAL_KEY> {
     MODIFIERS.into_iter().filter(|vk| unsafe { GetAsyncKeyState(vk.0 as i32) } < 0).collect()
 }
 
+fn unicode(out: &mut Vec<INPUT>, text: &str) {
+    for unit in text.encode_utf16() {
+        out.push(key(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE));
+        out.push(key(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
+    }
+}
+
+fn vk_for(c: char, hkl: HKL, caps: bool) -> Option<(VIRTUAL_KEY, bool)> {
+    let unit = u16::try_from(c as u32).ok()?;
+    let scan = unsafe { VkKeyScanExW(unit, hkl) };
+    if scan == -1 {
+        return None;
+    }
+    let state = (scan >> 8) & 0xFF;
+    if state & !1 != 0 {
+        return None;
+    }
+    Some((VIRTUAL_KEY((scan & 0xFF) as u16), (state & 1 != 0) ^ (caps && c.is_alphabetic())))
+}
+
+fn layout_keys(out: &mut Vec<INPUT>, text: &str, hkl: HKL, caps: bool) {
+    for c in text.chars() {
+        let Some((vk, shift)) = vk_for(c, hkl, caps) else {
+            unicode(out, &c.to_string());
+            continue;
+        };
+        let scan = unsafe { MapVirtualKeyExW(vk.0 as u32, MAPVK_VK_TO_VSC, Some(hkl)) } as u16;
+        if shift {
+            out.push(key(VK_LSHIFT, 0, KEYBD_EVENT_FLAGS(0)));
+        }
+        out.push(key(vk, scan, KEYBD_EVENT_FLAGS(0)));
+        out.push(key(vk, scan, KEYEVENTF_KEYUP));
+        if shift {
+            out.push(key(VK_LSHIFT, 0, KEYEVENTF_KEYUP));
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct Batch {
     out: Vec<INPUT>,
     mods: Option<Vec<VIRTUAL_KEY>>,
+    pub insert: Insert,
+    pub caps: bool,
 }
 
 impl Batch {
@@ -48,9 +90,21 @@ impl Batch {
         for _ in 0..backspaces {
             tap(&mut out, VK_BACK);
         }
-        for unit in text.encode_utf16() {
-            out.push(key(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE));
-            out.push(key(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP));
+        match self.insert {
+            Insert::Paste if !text.is_empty() => {
+                self.clean(out);
+                self.send();
+                if clipboard::stage(text) {
+                    self.chord(VK_CONTROL, VK_V);
+                    self.send();
+                    clipboard::pasted();
+                    return;
+                }
+                out = Vec::new();
+                unicode(&mut out, text);
+            }
+            Insert::Keys => layout_keys(&mut out, text, lang::current_hkl(), self.caps),
+            _ => unicode(&mut out, text),
         }
         self.clean(out);
     }
@@ -121,6 +175,15 @@ pub fn chord(modifier: VIRTUAL_KEY, vk: VIRTUAL_KEY) -> bool {
     b.send()
 }
 
+pub fn press_keys(keys: &[VIRTUAL_KEY]) -> bool {
+    let scan = |vk: VIRTUAL_KEY| unsafe { MapVirtualKeyW(vk.0 as u32, MAPVK_VK_TO_VSC) } as u16;
+    let mut out: Vec<INPUT> = keys.iter().map(|&vk| key(vk, scan(vk), KEYBD_EVENT_FLAGS(0))).collect();
+    out.extend(keys.iter().rev().map(|&vk| key(vk, scan(vk), KEYEVENTF_KEYUP)));
+    let mut b = Batch::default();
+    b.clean(out);
+    b.send()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,7 +207,7 @@ mod tests {
 
     #[test]
     fn batch_keeps_order() {
-        let mut b = Batch { out: Vec::new(), mods: Some(Vec::new()) };
+        let mut b = Batch { mods: Some(Vec::new()), ..Batch::default() };
         b.replay(&raw(VK_SPACE, 0x39, false));
         b.replay(&raw(VK_SPACE, 0x39, true));
         b.rewrite("ghbdtn ", "привет ");
@@ -160,7 +223,7 @@ mod tests {
 
     #[test]
     fn batch_releases_replayed_shift_around_rewrite() {
-        let mut b = Batch { out: Vec::new(), mods: Some(Vec::new()) };
+        let mut b = Batch { mods: Some(Vec::new()), ..Batch::default() };
         b.replay(&raw(VK_LSHIFT, 0x2A, false));
         b.rewrite("a", "b");
         b.replay(&raw(VK_LSHIFT, 0x2A, true));
@@ -171,5 +234,24 @@ mod tests {
         assert_eq!(ev[6], (VK_LSHIFT.0, 0, false));
         assert_eq!(ev[7], (VK_LSHIFT.0, 0x2A, true));
         assert!(ev[8..].iter().all(|e| e.0 != VK_LSHIFT.0));
+    }
+
+    fn vks(text: &str, lang: crate::keymap::Lang, caps: bool) -> Vec<(u16, bool)> {
+        let mut out = Vec::new();
+        layout_keys(&mut out, text, lang::hkl_for(lang).expect("layout"), caps);
+        out.iter().map(|i| unsafe { (i.Anonymous.ki.wVk.0, i.Anonymous.ki.dwFlags.contains(KEYEVENTF_KEYUP)) }).collect()
+    }
+
+    #[test]
+    fn layout_keys_type_through_layout() {
+        use crate::keymap::Lang;
+        if !lang::has_ru_en() {
+            return;
+        }
+        let (s, h, i) = (VK_LSHIFT.0, VK_H.0, VK_I.0);
+        assert_eq!(vks("Hi", Lang::En, false), [(s, false), (h, false), (h, true), (s, true), (i, false), (i, true)]);
+        assert_eq!(vks("Hi", Lang::En, true), [(h, false), (h, true), (s, false), (i, false), (i, true), (s, true)]);
+        assert_eq!(vks("Пр", Lang::Ru, false), [(s, false), (VK_G.0, false), (VK_G.0, true), (s, true), (VK_H.0, false), (VK_H.0, true)]);
+        assert_eq!(vks("€", Lang::En, false), [(0, false), (0, true)]);
     }
 }

@@ -1,3 +1,4 @@
+use ghbdtn_core::config::{Insert, Program, Switch};
 use ghbdtn_core::keymap::{key_of, Lang};
 use ghbdtn_core::win::{hook, lang, CoreEvent, Engine};
 use std::sync::atomic::Ordering::SeqCst;
@@ -307,6 +308,30 @@ fn main() {
     let mut c = engine.config();
     c.features.early = true;
     engine.set_config(c);
+
+    let sentinel = "ghbdtn-selftest-буфер";
+    let _ = clipboard_win::set_clipboard_string(sentinel);
+    for (insert, switch) in [(Insert::Paste, Switch::Message), (Insert::Keys, Switch::Message), (Insert::Unicode, Switch::Hotkey)] {
+        let mut c = engine.config();
+        c.programs.push(Program { exe: "notepad.exe".into(), insert, switch, ..Program::default() });
+        engine.set_config(c);
+        clear(np);
+        lang::switch(Lang::En);
+        std::thread::sleep(Duration::from_millis(200));
+        type_text(np, "Ghbdtn vbh ", Lang::En);
+        let got = text_of(np);
+        let after = lang::current();
+        std::thread::sleep(Duration::from_millis(600));
+        let clip = clipboard_win::get_clipboard_string().unwrap_or_default();
+        report(
+            &mut failed,
+            got == "Привет мир " && after == Some(Lang::Ru) && clip == sentinel,
+            format!("профиль {insert:?}/{switch:?} (сочетание {:?}, не работает {}) → {got:?}, раскладка {after:?}, буфер восстановлен {}", lang::toggle(), lang::hotkey_dead(), clip == sentinel),
+        );
+        let mut c = engine.config();
+        c.programs.retain(|p| p.exe != "notepad.exe");
+        engine.set_config(c);
+    }
 
     let dropped = hook::DROPPED.load(SeqCst);
     std::thread::sleep(Duration::from_millis(300));
