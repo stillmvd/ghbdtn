@@ -17,6 +17,7 @@ fn stats(since: Instant) {
         avg as f64 / 1000.0,
         FIX_US_MAX.load(SeqCst) as f64 / 1000.0
     );
+    println!("  шаги (ср/макс): {}", ghbdtn_core::win::hook::profile());
 }
 
 fn main() {

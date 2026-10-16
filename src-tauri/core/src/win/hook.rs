@@ -10,6 +10,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 pub const MARK: usize = 0x4748_4244;
+pub const TEST_MARK: usize = 0x4748_5453;
 const HOLD_LIMIT_MS: u32 = 1000;
 const WM_REINSTALL: u32 = WM_APP + 1;
 const WM_QUIT_HOOK: u32 = WM_APP + 2;
@@ -50,6 +51,7 @@ pub static LAST_TICK: AtomicU32 = AtomicU32::new(0);
 pub static HOOK_THREAD: AtomicU32 = AtomicU32::new(0);
 pub static LANG: AtomicU8 = AtomicU8::new(0);
 pub static ACCEPT_INJECTED: AtomicBool = AtomicBool::new(false);
+static ACCEPT_TEST: AtomicBool = AtomicBool::new(false);
 pub static EVENTS: AtomicU64 = AtomicU64::new(0);
 pub static DROPPED: AtomicU64 = AtomicU64::new(0);
 pub static REPLAYED: AtomicU64 = AtomicU64::new(0);
@@ -57,8 +59,61 @@ pub static REINSTALLS: AtomicU64 = AtomicU64::new(0);
 pub static FIXES: AtomicU64 = AtomicU64::new(0);
 pub static FIX_US_TOTAL: AtomicU64 = AtomicU64::new(0);
 pub static FIX_US_MAX: AtomicU64 = AtomicU64::new(0);
+pub static QUEUE: Stage = Stage::new("queue");
+pub static EVALUATE: Stage = Stage::new("evaluate");
+pub static DECIDE: Stage = Stage::new("decide");
+pub static SEND: Stage = Stage::new("send");
+pub static SWITCH: Stage = Stage::new("switch");
+pub static STAGES: [&Stage; 5] = [&QUEUE, &EVALUATE, &DECIDE, &SEND, &SWITCH];
 static EATEN: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 static SENDER: OnceLock<Sender<HookEvent>> = OnceLock::new();
+
+pub struct Stage {
+    pub name: &'static str,
+    n: AtomicU64,
+    total_us: AtomicU64,
+    max_us: AtomicU64,
+}
+
+impl Stage {
+    const fn new(name: &'static str) -> Stage {
+        Stage { name, n: AtomicU64::new(0), total_us: AtomicU64::new(0), max_us: AtomicU64::new(0) }
+    }
+
+    pub fn add(&self, d: std::time::Duration) {
+        let us = d.as_micros() as u64;
+        self.n.fetch_add(1, SeqCst);
+        self.total_us.fetch_add(us, SeqCst);
+        self.max_us.fetch_max(us, SeqCst);
+    }
+
+    pub fn time<T>(&self, f: impl FnOnce() -> T) -> T {
+        let start = std::time::Instant::now();
+        let out = f();
+        self.add(start.elapsed());
+        out
+    }
+
+    pub fn count(&self) -> u64 {
+        self.n.load(SeqCst)
+    }
+
+    pub fn avg_ms(&self) -> f64 {
+        self.total_us.load(SeqCst).checked_div(self.count()).unwrap_or(0) as f64 / 1000.0
+    }
+
+    pub fn max_ms(&self) -> f64 {
+        self.max_us.load(SeqCst) as f64 / 1000.0
+    }
+}
+
+pub fn profile() -> String {
+    STAGES
+        .iter()
+        .map(|s| format!("{} {:.2}/{:.2} мс ×{}", s.name, s.avg_ms(), s.max_ms(), s.count()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 pub const MOD_SHIFT: u32 = 1 << 16;
 pub const MOD_CTRL: u32 = 1 << 17;
@@ -166,10 +221,16 @@ fn hotkey_matches(code: u32, vk: u16, k: &RawKey) -> bool {
         && (code & MOD_ALT != 0) == k.alt
 }
 
+fn foreign(kb: &KBDLLHOOKSTRUCT) -> bool {
+    kb.flags.contains(LLKHF_INJECTED)
+        && !ACCEPT_INJECTED.load(SeqCst)
+        && !(kb.dwExtraInfo == TEST_MARK && ACCEPT_TEST.load(SeqCst))
+}
+
 fn on_key(kb: &KBDLLHOOKSTRUCT) -> bool {
     let flags = kb.flags;
     let up = flags.contains(LLKHF_UP);
-    if flags.contains(LLKHF_INJECTED) && !ACCEPT_INJECTED.load(SeqCst) {
+    if foreign(kb) {
         PENDING.store(false, SeqCst);
         push(HookEvent::Foreign);
         return false;
@@ -287,6 +348,7 @@ fn uninstall(hooks: (Option<HHOOK>, Option<HHOOK>)) {
 
 pub fn run(tx: Sender<HookEvent>) -> std::thread::JoinHandle<()> {
     let _ = SENDER.set(tx);
+    ACCEPT_TEST.store(std::env::var_os("GHBDTN_ACCEPT_TEST_INPUT").is_some_and(|v| v == "1"), SeqCst);
     std::thread::Builder::new()
         .name("ghbdtn-hook".into())
         .spawn(|| unsafe {
@@ -344,5 +406,27 @@ mod tests {
         assert_eq!(parse_hotkey("ctrl+alt+F12"), Some(MOD_CTRL | MOD_ALT | VK_F12.0 as u32));
         assert_eq!(parse_hotkey("Ctrl+Q"), Some(MOD_CTRL | b'Q' as u32));
         assert_eq!(parse_hotkey("Hyper+X"), None);
+    }
+
+    #[test]
+    fn test_mark_needs_opt_in() {
+        let kb = |flags, extra| KBDLLHOOKSTRUCT { flags, dwExtraInfo: extra, ..Default::default() };
+        assert!(!foreign(&kb(KBDLLHOOKSTRUCT_FLAGS(0), 0)));
+        assert!(foreign(&kb(LLKHF_INJECTED, 0)));
+        assert!(foreign(&kb(LLKHF_INJECTED, TEST_MARK)));
+        ACCEPT_TEST.store(true, SeqCst);
+        assert!(!foreign(&kb(LLKHF_INJECTED, TEST_MARK)));
+        assert!(foreign(&kb(LLKHF_INJECTED, 0)));
+        ACCEPT_TEST.store(false, SeqCst);
+    }
+
+    #[test]
+    fn stage_counts() {
+        let s = Stage::new("t");
+        s.add(std::time::Duration::from_micros(1000));
+        s.add(std::time::Duration::from_micros(3000));
+        assert_eq!(s.count(), 2);
+        assert_eq!(s.avg_ms(), 2.0);
+        assert_eq!(s.max_ms(), 3.0);
     }
 }

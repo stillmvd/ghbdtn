@@ -175,6 +175,7 @@ fn main() {
             hook::REPLAYED.load(SeqCst)
         ),
     );
+    println!("     шаги (ср/макс): {}", hook::profile());
 
     clear(np);
     lang::switch(Lang::En);

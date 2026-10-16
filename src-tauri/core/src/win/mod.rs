@@ -507,15 +507,16 @@ impl Worker {
             }
             return;
         };
+        hook::QUEUE.add(started.elapsed());
         if let Some(e) = edit.filter(|e| !e.text.is_empty() && e.text != e.before) {
             self.learning.remove(&e.before.trim_end_matches(|c: char| !c.is_alphanumeric()).to_lowercase());
             self.emit(CoreEvent::Retyped { before: e.before, after: e.text, fix: e.fix });
         }
         let keys = self.word.take();
-        let (status, mode) = self.evaluate();
+        let (status, mode) = hook::EVALUATE.time(|| self.evaluate());
         let cfg = self.cfg();
         let fix = (status == Status::Working && !keys.is_empty() && !glued && (sep != Separator::Enter || enter_eaten))
-            .then(|| decide(&WordInput { keys: &keys, lang, code_mode: mode == Mode::Code, prev: self.ctx.as_deref() }, &self.dicts, &cfg))
+            .then(|| hook::DECIDE.time(|| decide(&WordInput { keys: &keys, lang, code_mode: mode == Mode::Code, prev: self.ctx.as_deref() }, &self.dicts, &cfg)))
             .flatten();
         let word_like = |t: &str| t.chars().all(|c| c.is_alphabetic() || c == '-') || t.chars().all(|c| c.is_ascii_digit());
         let plain = |t: &str| (sep == Separator::Space && !glued && word_like(t)).then(|| t.to_string());
@@ -539,13 +540,13 @@ impl Worker {
                 };
                 let typed_all = prev_typed + &fix.typed;
                 let result_all = prev_out + &fix.text;
-                output::rewrite(&(typed_all.clone() + &sep_typed), &(result_all.clone() + &sep_out));
+                hook::SEND.time(|| output::rewrite(&(typed_all.clone() + &sep_typed), &(result_all.clone() + &sep_out)));
                 let us = started.elapsed().as_micros() as u64;
                 hook::FIXES.fetch_add(1, SeqCst);
                 hook::FIX_US_TOTAL.fetch_add(us, SeqCst);
                 hook::FIX_US_MAX.fetch_max(us, SeqCst);
                 if fix.to.is_some() {
-                    lang::switch(to);
+                    hook::SWITCH.time(|| lang::switch(to));
                     hook::set_lang(Some(to));
                 }
                 if sep == Separator::Enter {
