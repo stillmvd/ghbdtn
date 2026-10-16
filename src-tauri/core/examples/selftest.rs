@@ -291,9 +291,38 @@ fn main() {
     let got = text_of(np);
     report(&mut failed, got == "hello привет ", format!("двойной пробел ⌫ → {got:?}"));
 
+    clear(np);
+    lang::switch(Lang::En);
+    std::thread::sleep(Duration::from_millis(200));
+    let mut c = engine.config();
+    c.features.early = false;
+    engine.set_config(c);
+    std::thread::sleep(Duration::from_millis(100));
+    type_text(np, "ghb", Lang::En);
+    lang::switch(Lang::Ru);
+    std::thread::sleep(Duration::from_millis(200));
+    type_text(np, "вет ", Lang::Ru);
+    let got = text_of(np);
+    report(&mut failed, got == "ghbвет ", format!("ручная смена раскладки посреди слова → {got:?}"));
+    let mut c = engine.config();
+    c.features.early = true;
+    engine.set_config(c);
+
     let dropped = hook::DROPPED.load(SeqCst);
     std::thread::sleep(Duration::from_millis(300));
     report(&mut failed, dropped == 0 && hook::REINSTALLS.load(SeqCst) == 0 && hook::hold_state() == 0, format!("всего: потеряно {dropped}, переустановок {}, задержка {}", hook::REINSTALLS.load(SeqCst), hook::hold_state()));
+
+    clear(np);
+    lang::switch(Lang::En);
+    std::thread::sleep(Duration::from_millis(200));
+    let watch = unsafe { FindWindowW(hook::WATCH_CLASS, None) }.unwrap_or_default();
+    unsafe {
+        let _ = SendMessageW(watch, WM_POWERBROADCAST, Some(WPARAM(PBT_APMRESUMEAUTOMATIC as usize)), Some(LPARAM(0)));
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    type_text(np, "ghbdtn ", Lang::En);
+    let got = text_of(np);
+    report(&mut failed, !watch.is_invalid() && hook::REINSTALLS.load(SeqCst) == 1 && got == "привет ", format!("выход из сна: окно {}, переустановок {}, дальше {got:?}", !watch.is_invalid(), hook::REINSTALLS.load(SeqCst)));
 
     tap_vk(np, &[VK_CONTROL, VK_A]);
     tap_vk(np, &[VK_DELETE]);

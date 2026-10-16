@@ -276,6 +276,22 @@ fn hard_set_untouched() {
 }
 
 #[test]
+fn rival_misses() {
+    let dicts = Dictionaries::load();
+    let cfg = config();
+    let with_prev = |text: &str, prev: &str| {
+        let keys = keys_for(text, Lang::En);
+        decide(&WordInput { keys: &keys, lang: Lang::En, code_mode: false, prev: Some(prev) }, &dicts, &cfg).map(|f| f.text)
+    };
+    assert_eq!(with_prev("jr", "ye").as_deref(), Some("ок"));
+    assert_eq!(with_prev("ok", "ye"), None);
+    for (typed, want) in [("teh", "the"), ("Teh", "The"), ("adn", "and"), ("taht", "that"), ("becuase", "because")] {
+        assert_eq!(run(typed, Lang::En, Lang::En, false, &dicts, &cfg), Some((ActionKind::Typo, want.to_string())), "{typed}");
+    }
+    assert_eq!(run("teh", Lang::En, Lang::En, true, &dicts, &cfg), None);
+}
+
+#[test]
 fn decide_is_fast() {
     let dicts = Dictionaries::load();
     let cfg = config();

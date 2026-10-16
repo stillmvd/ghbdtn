@@ -27,6 +27,15 @@ const WEAK_RATIO: u32 = 300;
 const SOLID_FREQ: u32 = 100;
 const REAL_MIN: u32 = 100;
 const PARTICLES: &[&str] = &["ну", "не", "но", "да", "мы", "вы", "ты", "он", "бы", "же", "ли", "по", "до", "из", "за", "то", "уж"];
+const EN_MISSPELLED: &[(&str, &str)] = &[
+    ("teh", "the"), ("hte", "the"), ("adn", "and"), ("taht", "that"), ("thta", "that"), ("waht", "what"), ("whta", "what"),
+    ("yuo", "you"), ("thier", "their"), ("recieve", "receive"), ("beleive", "believe"), ("wierd", "weird"),
+    ("untill", "until"), ("definately", "definitely"), ("seperate", "separate"), ("occured", "occurred"),
+    ("acheive", "achieve"), ("tommorow", "tomorrow"), ("becuase", "because"), ("becasue", "because"), ("wich", "which"),
+    ("whcih", "which"), ("jsut", "just"), ("knwo", "know"), ("konw", "know"), ("tihs", "this"), ("ahve", "have"),
+    ("hvae", "have"), ("liek", "like"), ("aslo", "also"), ("abotu", "about"), ("shoudl", "should"), ("woudl", "would"),
+    ("coudl", "could"),
+];
 const FAR_SHORT: f32 = 1.2;
 const FAR_LONG: f32 = 1.6;
 const MOVED: f32 = 0.7;
@@ -425,6 +434,11 @@ pub fn fix_after(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionari
 
 pub fn fix_rule(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionaries) -> Option<(String, Rule)> {
     let lower = typed.to_lowercase();
+    if lang == Lang::En {
+        if let Some((_, right)) = EN_MISSPELLED.iter().find(|(wrong, _)| *wrong == lower) {
+            return Some((apply_case(typed, right), Rule::Misspelled));
+        }
+    }
     let chars: Vec<char> = lower.chars().collect();
     if chars.len() < MIN_LEN {
         return short_fix(typed, &chars, prev, lang, dicts).map(|t| (t, Rule::ShortFix));

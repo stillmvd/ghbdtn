@@ -8,7 +8,7 @@ const ALT_FREQ: u32 = 200;
 const SHORT_ALT_FREQ: u32 = 1000;
 const OVERRIDE_FREQ: u32 = 20_000;
 const NEAR_RATIO: u32 = 10;
-const PAIR_MIN: u32 = 10;
+const PAIR_MIN: u32 = 5;
 const TAIL: &[char] = &[',', '.', ';', ':', '\'', '"', '?', '!', ')', '»'];
 
 pub fn split_tail(text: &str, lang: Lang) -> (&str, &str) {
@@ -94,7 +94,7 @@ pub fn layout_after(keys: &[Key], lang: Lang, prev: Option<&str>, dicts: &Dictio
 
 const SHORT_RU: &[&str] = &[
     "а", "в", "и", "к", "о", "с", "у", "я", "не", "на", "но", "же", "ли", "бы", "по", "за", "из", "от", "до", "да", "ты",
-    "мы", "вы", "он", "то", "ну", "уж", "во", "со", "ко", "об", "ей", "им", "их", "её", "ее",
+    "мы", "вы", "он", "то", "ну", "ок", "уж", "во", "со", "ко", "об", "ей", "им", "их", "её", "ее",
 ];
 const SHORT_EN: &[&str] = &[
     "a", "i", "to", "of", "in", "on", "at", "is", "it", "be", "we", "he", "me", "my", "an", "or", "as", "by", "so", "no",

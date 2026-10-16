@@ -171,6 +171,11 @@ fn is_nav(vk: VIRTUAL_KEY) -> bool {
     )
 }
 
+fn breaks_word(k: &RawKey) -> bool {
+    let vk = VIRTUAL_KEY(k.vk);
+    k.ctrl || k.alt || k.win || is_nav(vk) || (VK_F1.0..=VK_F24.0).contains(&k.vk) || vk == VK_APPS
+}
+
 fn is_modifier(vk: VIRTUAL_KEY) -> bool {
     matches!(
         vk,
@@ -466,7 +471,7 @@ impl Worker {
         }
         self.book.close();
         ARMED_UNDO.store(false, SeqCst);
-        if k.ctrl || k.alt || k.win || is_nav(vk) {
+        if breaks_word(&k) {
             self.reset();
             return;
         }
@@ -496,6 +501,10 @@ impl Worker {
             return;
         }
         if char_of(k.scan, k.shift, self.caps, lang).is_some() {
+            if !self.word.is_empty() && lang::current().is_some_and(|l| l != lang) {
+                self.glued = true;
+                self.early_pending = None;
+            }
             if self.word.is_empty() {
                 self.prev = self.last.take();
                 self.word_lang = Some(lang);
@@ -586,6 +595,7 @@ impl Worker {
             return;
         };
         hook::QUEUE.add(started.elapsed());
+        let glued = glued || lang::current().is_some_and(|l| l != lang);
         if let Some(e) = edit.filter(|e| !e.text.is_empty() && e.text != e.before) {
             self.learning.remove(&e.before.trim_end_matches(|c: char| !c.is_alphanumeric()).to_lowercase());
             self.emit(CoreEvent::Retyped { before: e.before, after: e.text, fix: e.fix });
@@ -797,4 +807,42 @@ fn hook_code(k: &RawKey) -> u32 {
         code |= hook::MOD_ALT;
     }
     code
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn raw(vk: VIRTUAL_KEY, ctrl: bool, alt: bool, win: bool) -> RawKey {
+        RawKey {
+            vk: vk.0,
+            scan: 0,
+            up: false,
+            extended: false,
+            shift: false,
+            ctrl,
+            alt,
+            win,
+            eaten: false,
+            held: false,
+            counted: false,
+            at: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn word_breakers() {
+        let plain = |vk| breaks_word(&raw(vk, false, false, false));
+        for vk in [VK_ESCAPE, VK_F1, VK_F12, VK_F24, VK_LEFT, VK_RIGHT, VK_UP, VK_DOWN, VK_HOME, VK_END, VK_PRIOR, VK_NEXT, VK_TAB, VK_DELETE, VK_INSERT, VK_APPS] {
+            assert!(plain(vk), "{vk:?}");
+        }
+        for vk in [VK_V, VK_X, VK_Z, VK_Y, VK_A] {
+            assert!(breaks_word(&raw(vk, true, false, false)), "ctrl {vk:?}");
+        }
+        assert!(breaks_word(&raw(VK_E, true, true, false)));
+        assert!(breaks_word(&raw(VK_SPACE, false, false, true)));
+        for vk in [VK_A, VK_SPACE, VK_OEM_COMMA, VK_BACK, VK_RETURN] {
+            assert!(!plain(vk), "{vk:?}");
+        }
+    }
 }

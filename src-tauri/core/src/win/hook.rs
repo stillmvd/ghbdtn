@@ -3,7 +3,10 @@ use crate::word::{separator_kind, Key};
 use crossbeam_channel::Sender;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering::SeqCst};
 use std::sync::OnceLock;
-use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+use windows::core::{w, PCWSTR};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::RemoteDesktop::{WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION};
 use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
@@ -412,6 +415,7 @@ pub fn run(tx: Sender<HookEvent>) -> std::thread::JoinHandle<()> {
             HOOK_THREAD.store(GetCurrentThreadId(), SeqCst);
             LAST_TICK.store(GetTickCount(), SeqCst);
             let mut hooks = install();
+            let watch = watch_window();
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 match msg.message {
@@ -427,9 +431,43 @@ pub fn run(tx: Sender<HookEvent>) -> std::thread::JoinHandle<()> {
                     }
                 }
             }
+            if let Some(hwnd) = watch {
+                let _ = WTSUnRegisterSessionNotification(hwnd);
+                let _ = DestroyWindow(hwnd);
+            }
             uninstall(hooks);
         })
         .expect("hook thread")
+}
+
+pub const WATCH_CLASS: PCWSTR = w!("GhbdtnSessionWatch");
+
+fn resumed(msg: u32, wparam: WPARAM) -> bool {
+    let code = wparam.0 as u32;
+    match msg {
+        WM_WTSSESSION_CHANGE => matches!(code, WTS_CONSOLE_CONNECT | WTS_REMOTE_CONNECT | WTS_SESSION_LOGON | WTS_SESSION_UNLOCK),
+        WM_POWERBROADCAST => matches!(code, PBT_APMRESUMEAUTOMATIC | PBT_APMRESUMESUSPEND),
+        _ => false,
+    }
+}
+
+unsafe extern "system" fn watch_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if resumed(msg, wparam) {
+        PENDING.store(false, SeqCst);
+        ARMED_UNDO.store(false, SeqCst);
+        reinstall();
+        push(HookEvent::Focus);
+    }
+    DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+unsafe fn watch_window() -> Option<HWND> {
+    let instance = GetModuleHandleW(None).ok()?.into();
+    let class = WNDCLASSW { lpfnWndProc: Some(watch_proc), hInstance: instance, lpszClassName: WATCH_CLASS, ..Default::default() };
+    RegisterClassW(&class);
+    let hwnd = CreateWindowExW(WINDOW_EX_STYLE(0), WATCH_CLASS, w!(""), WS_OVERLAPPED, 0, 0, 0, 0, None, None, Some(instance), None).ok()?;
+    let _ = WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION);
+    Some(hwnd)
 }
 
 fn post(msg: u32) {

@@ -31,10 +31,11 @@ pub enum Rule {
     Joint,
     FarFix,
     Early,
+    Misspelled,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 14] = [
+    pub const ALL: [Rule; 15] = [
         Rule::Replace,
         Rule::Layout,
         Rule::LayoutAfterShort,
@@ -49,6 +50,7 @@ impl Rule {
         Rule::Joint,
         Rule::FarFix,
         Rule::Early,
+        Rule::Misspelled,
     ];
 
     pub fn name(self) -> &'static str {
@@ -67,6 +69,7 @@ impl Rule {
             Rule::Joint => "joint",
             Rule::FarFix => "far_fix",
             Rule::Early => "early",
+            Rule::Misspelled => "misspelled",
         }
     }
 }
