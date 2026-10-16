@@ -1,6 +1,7 @@
 use ghbdtn_core::config::Config;
 use ghbdtn_core::decide::{decide, Rule, WordInput};
 use ghbdtn_core::dict::Dictionaries;
+use ghbdtn_core::early::early_fix;
 use ghbdtn_core::keymap::Lang;
 use ghbdtn_core::typo::{adjacent, fix_after};
 use ghbdtn_core::undo::ActionKind;
@@ -172,6 +173,90 @@ fn moved_letter() {
     let (r, x) = (right as f64 / total as f64, wrong as f64 / total as f64);
     println!("Ru moved right {:.1}% wrong {:.2}% of {total} {wrong_samples:?}", r * 100.0, x * 100.0);
     assert!(x <= 0.02, "moved letter wrong");
+}
+
+fn early_at(word: &str, keys_lang: Lang, lang: Lang, dicts: &Dictionaries, cfg: &Config) -> Option<(usize, String)> {
+    let keys = keys_for(word, keys_lang);
+    (1..=keys.len()).find_map(|n| {
+        early_fix(&WordInput { keys: &keys[..n], lang, code_mode: false, prev: None }, dicts, cfg).map(|f| (n, f.text))
+    })
+}
+
+#[test]
+fn early_starts() {
+    let dicts = Dictionaries::load();
+    let cfg = config();
+    let leipzig = |lang: Lang| -> Vec<String> {
+        let text = match lang {
+            Lang::Ru => include_str!("../data/ru.bigram.words"),
+            Lang::En => include_str!("../data/en.bigram.words"),
+        };
+        text.lines().filter(|w| w.chars().count() >= 3 && w.chars().all(|c| lang.owns_letter(c))).map(str::to_string).collect()
+    };
+    for lang in [Lang::Ru, Lang::En] {
+        let top = top_words(lang);
+        let false_top: Vec<String> = top.iter().filter_map(|w| early_at(w, lang, lang, &dicts, &cfg).map(|(n, t)| format!("{w}→{t}@{n}"))).collect();
+        println!("{lang:?} early false top {} {:?}", false_top.len(), false_top.iter().take(15).collect::<Vec<_>>());
+        assert!(false_top.is_empty(), "early false top {lang:?}");
+
+        let held = leipzig(lang);
+        let false_held: Vec<String> = held.iter().filter_map(|w| early_at(w, lang, lang, &dicts, &cfg).map(|(n, t)| format!("{w}→{t}@{n}"))).collect();
+        let rate = false_held.len() as f64 / held.len() as f64;
+        println!("{lang:?} early false leipzig {} of {} ({:.3}%) {:?}", false_held.len(), held.len(), rate * 100.0, false_held.iter().take(25).collect::<Vec<_>>());
+        assert!(rate <= 0.001, "early false leipzig {lang:?}");
+
+        let long: Vec<&String> = top.iter().filter(|w| w.chars().count() >= 4 && w.chars().all(|c| lang.owns_letter(c))).collect();
+        let mut by_n: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut wrong = Vec::new();
+        for w in &long {
+            if let Some((n, t)) = early_at(w, lang, lang.other(), &dicts, &cfg) {
+                if n < w.chars().count() {
+                    *by_n.entry(n).or_default() += 1;
+                }
+                if !w.starts_with(&t) {
+                    wrong.push(format!("{w}→{t}"));
+                }
+                let keys = keys_for(w, lang);
+                let after = decide(&WordInput { keys: &keys, lang, code_mode: false, prev: None }, &dicts, &cfg);
+                if after.as_ref().is_some_and(|f| f.to.is_some()) {
+                    wrong.push(format!("{w} then {:?}", after.map(|f| f.text)));
+                }
+            }
+        }
+        let (mut typos, mut typo_early) = (0, Vec::new());
+        for w in top.iter().filter(|w| w.chars().count() >= 5 && w.chars().all(|c| lang.owns_letter(c))) {
+            let c: Vec<char> = w.chars().collect();
+            for i in 0..3 {
+                let mut vs = Vec::new();
+                if let Some(r) = lang.alphabet().chars().find(|&r| adjacent(c[i], r, lang)) {
+                    let mut v = c.clone();
+                    v[i] = r;
+                    vs.push(v);
+                }
+                if c[i] != c[i + 1] {
+                    let mut v = c.clone();
+                    v.swap(i, i + 1);
+                    vs.push(v);
+                }
+                for v in vs {
+                    let v: String = v.into_iter().collect();
+                    if dicts.seen(lang, &v) {
+                        continue;
+                    }
+                    typos += 1;
+                    if let Some((n, t)) = early_at(&v, lang, lang, &dicts, &cfg) {
+                        typo_early.push(format!("{v}→{t}@{n} ({w})"));
+                    }
+                }
+            }
+        }
+        let typo_rate = typo_early.len() as f64 / typos as f64;
+        println!("{lang:?} early on start typos {} of {typos} ({:.2}%) {:?}", typo_early.len(), typo_rate * 100.0, typo_early.iter().take(20).collect::<Vec<_>>());
+        assert!(typo_rate <= 0.01, "early on start typos {lang:?}");
+        let early: usize = by_n.values().sum();
+        println!("{lang:?} early right {:.1}% of {} by length {by_n:?} wrong {:?}", early as f64 * 100.0 / long.len() as f64, long.len(), wrong.iter().take(15).collect::<Vec<_>>());
+        assert!(wrong.is_empty(), "early wrong {lang:?}");
+    }
 }
 
 #[test]
@@ -411,9 +496,16 @@ fn outcome(c: &Case, dicts: &Dictionaries, cfg: &Config) -> (Option<(Rule, Strin
     let keys = keys_for(&c.typed, c.keys_lang);
     let input = WordInput { keys: &keys, lang: c.lang, code_mode: false, prev: c.prev.as_deref() };
     let t = Instant::now();
-    let fix = decide(&input, dicts, cfg);
+    let early = (1..=keys.len()).find_map(|n| early_fix(&WordInput { keys: &keys[..n], lang: c.lang, code_mode: false, prev: None }, dicts, cfg));
+    let fix = match early.and_then(|e| e.to) {
+        Some(to) => Some(
+            decide(&WordInput { keys: &keys, lang: to, code_mode: false, prev: c.prev.as_deref() }, dicts, cfg)
+                .map_or((Rule::Early, render(&keys, to)), |f| (f.rule, f.text)),
+        ),
+        None => decide(&input, dicts, cfg).map(|f| (f.rule, f.text)),
+    };
     let us = t.elapsed().as_secs_f64() * 1e6;
-    (fix.map(|f| (f.rule, f.text)), us)
+    (fix, us)
 }
 
 #[test]
@@ -421,7 +513,8 @@ fn outcome(c: &Case, dicts: &Dictionaries, cfg: &Config) -> (Option<(Rule, Strin
 fn rule_stats() {
     let dicts = Dictionaries::load();
     let bare = Dictionaries::load().without_forms();
-    let cfg = config();
+    let mut cfg = config();
+    cfg.features.early = std::env::var_os("GHBDTN_NO_EARLY").is_none();
     let cases = cases(&dicts);
     let mut rules: BTreeMap<(&str, &str), Tally> = BTreeMap::new();
     let mut sets: BTreeMap<String, SetTally> = BTreeMap::new();

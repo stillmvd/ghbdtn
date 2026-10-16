@@ -41,6 +41,7 @@ pub enum HookEvent {
 }
 
 static HOLD: AtomicU32 = AtomicU32::new(0);
+static IN_HOOK: AtomicU32 = AtomicU32::new(0);
 static HOLD_SINCE: AtomicU32 = AtomicU32::new(0);
 pub static ARMED_UNDO: AtomicBool = AtomicBool::new(false);
 pub static ENABLED: AtomicBool = AtomicBool::new(true);
@@ -203,6 +204,13 @@ fn hold_counted(k: &mut RawKey) {
     k.counted = true;
 }
 
+pub fn wait_idle() {
+    let start = std::time::Instant::now();
+    while IN_HOOK.load(SeqCst) > 0 && start.elapsed() < std::time::Duration::from_millis(5) {
+        std::hint::spin_loop();
+    }
+}
+
 pub fn hold_state() -> u32 {
     HOLD.load(SeqCst)
 }
@@ -352,7 +360,9 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         LAST_TICK.store(GetTickCount(), SeqCst);
         let kb = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
         if kb.dwExtraInfo != MARK {
+            IN_HOOK.fetch_add(1, SeqCst);
             let eat = std::panic::catch_unwind(|| on_key(kb)).unwrap_or(false);
+            IN_HOOK.fetch_sub(1, SeqCst);
             if eat {
                 return LRESULT(1);
             }

@@ -8,11 +8,12 @@ pub struct Features {
     pub layout: bool,
     pub typos: bool,
     pub replace: bool,
+    pub early: bool,
 }
 
 impl Default for Features {
     fn default() -> Self {
-        Features { layout: true, typos: true, replace: true }
+        Features { layout: true, typos: true, replace: true, early: true }
     }
 }
 
@@ -226,6 +227,11 @@ impl Config {
     pub fn is_never(&self, word: &str) -> bool {
         let w = word.to_lowercase();
         self.never.iter().any(|n| n.word == w)
+    }
+
+    pub fn never_starts(&self, prefix: &str) -> bool {
+        let p = prefix.to_lowercase();
+        self.never.iter().any(|n| n.word.starts_with(&p))
     }
 
     pub fn add_never(&mut self, word: &str, source: NeverSource) {

@@ -1,6 +1,7 @@
 pub mod config;
 pub mod decide;
 pub mod dict;
+pub mod early;
 pub mod keymap;
 pub mod layout;
 pub mod replace;

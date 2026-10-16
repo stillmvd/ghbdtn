@@ -30,10 +30,11 @@ pub enum Rule {
     Context,
     Joint,
     FarFix,
+    Early,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 13] = [
+    pub const ALL: [Rule; 14] = [
         Rule::Replace,
         Rule::Layout,
         Rule::LayoutAfterShort,
@@ -47,6 +48,7 @@ impl Rule {
         Rule::Context,
         Rule::Joint,
         Rule::FarFix,
+        Rule::Early,
     ];
 
     pub fn name(self) -> &'static str {
@@ -64,6 +66,7 @@ impl Rule {
             Rule::Context => "context",
             Rule::Joint => "joint",
             Rule::FarFix => "far_fix",
+            Rule::Early => "early",
         }
     }
 }

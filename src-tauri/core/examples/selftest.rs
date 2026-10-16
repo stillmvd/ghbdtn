@@ -109,7 +109,7 @@ fn main() {
     std::fs::write(&doc, "").unwrap();
     hook::ACCEPT_INJECTED.store(true, SeqCst);
     let (tx, rx) = crossbeam_channel::unbounded();
-    let _engine = Engine::start(cfg_path, tx);
+    let engine = Engine::start(cfg_path, tx);
     std::process::Command::new("notepad.exe").arg(&doc).spawn().unwrap();
     let np = find_notepad(file);
     std::thread::sleep(Duration::from_millis(500));
@@ -153,6 +153,22 @@ fn main() {
     let ok = got == "ghbdtn " && lang::current() == Some(Lang::En);
     failed += !ok as i32;
     println!("{} undo → {:?}, раскладка {:?}", if ok { "OK  " } else { "FAIL" }, got, lang::current());
+
+    tap_vk(np, &[VK_CONTROL, VK_A]);
+    tap_vk(np, &[VK_DELETE]);
+    lang::switch(Lang::En);
+    std::thread::sleep(Duration::from_millis(200));
+    type_text(np, "ghbd", Lang::En);
+    let early = text_of(np);
+    tap_vk(np, &[VK_CONTROL, VK_BACK]);
+    let undone = (text_of(np), lang::current());
+    type_text(np, "tn ", Lang::En);
+    let got = text_of(np);
+    report(
+        &mut failed,
+        early == "прив" && undone == ("ghbd".to_string(), Some(Lang::En)) && got == "ghbdtn ",
+        format!("ранняя правка {early:?}, отмена посреди слова {undone:?}, дальше {got:?}"),
+    );
 
     tap_vk(np, &[VK_CONTROL, VK_A]);
     tap_vk(np, &[VK_DELETE]);
@@ -224,12 +240,19 @@ fn main() {
     clear(np);
     lang::switch(Lang::En);
     std::thread::sleep(Duration::from_millis(200));
+    let mut c = engine.config();
+    c.features.early = false;
+    engine.set_config(c);
+    std::thread::sleep(Duration::from_millis(100));
     type_text(np, "ghbdtnn ", Lang::En);
     tap_vk(np, &[VK_BACK]);
     tap_vk(np, &[VK_BACK]);
     tap_vk(np, &[VK_RETURN]);
     let got = text_of(np);
     report(&mut failed, got.trim_end() == "ghbdtn" && got.len() - got.trim_end().len() <= 2, format!("⌫⌫ Enter → {got:?}"));
+    let mut c = engine.config();
+    c.features.early = true;
+    engine.set_config(c);
 
     clear(np);
     lang::switch(Lang::En);

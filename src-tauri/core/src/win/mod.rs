@@ -5,7 +5,8 @@ pub mod lang;
 pub mod output;
 
 use crate::config::{Config, Mode, NeverSource};
-use crate::decide::{decide, Rule, WordInput};
+use crate::decide::{decide, Fix, Rule, WordInput};
+use crate::early::early_fix;
 use crate::dict::Dictionaries;
 use crate::keymap::{char_of, convert_text, script_of, Lang};
 use crate::layout::{short_alongside, split_tail};
@@ -118,6 +119,13 @@ struct LastWord {
     sep: String,
 }
 
+struct Early {
+    lang_before: Lang,
+    prev_typed: String,
+    prev_out: String,
+    undone: bool,
+}
+
 #[derive(Default)]
 struct Shown {
     text: String,
@@ -147,6 +155,9 @@ struct Worker {
     caps: bool,
     batch: output::Batch,
     fix_started: Option<Instant>,
+    mode: Mode,
+    early: Option<Early>,
+    early_pending: Option<(Fix, Instant, bool)>,
     status: Option<Status>,
     last_key: Instant,
     last_watch: Instant,
@@ -196,6 +207,9 @@ impl Worker {
             caps: unsafe { GetKeyState(VK_CAPITAL.0 as i32) } & 1 != 0,
             batch: output::Batch::default(),
             fix_started: None,
+            mode: Mode::Normal,
+            early: None,
+            early_pending: None,
             status: None,
             last_key: Instant::now(),
             last_watch: Instant::now(),
@@ -248,6 +262,7 @@ impl Worker {
             Status::Working
         };
         ALLOWED.store(status == Status::Working, SeqCst);
+        self.mode = mode;
         if self.status != Some(status) {
             self.status = Some(status);
             self.emit(CoreEvent::Status(status));
@@ -264,6 +279,8 @@ impl Worker {
         self.edit = None;
         self.glued = false;
         self.ctx = None;
+        self.early = None;
+        self.early_pending = None;
         self.book.close();
         ARMED_UNDO.store(false, SeqCst);
         PENDING.store(false, SeqCst);
@@ -274,6 +291,7 @@ impl Worker {
             self.word.backspace();
             if self.word.is_empty() {
                 self.word_lang = None;
+                self.early = None;
             }
             if let Some(e) = self.edit.as_mut() {
                 e.text.pop();
@@ -339,6 +357,9 @@ impl Worker {
                     }
                     if !k.up {
                         self.key(k);
+                    }
+                    if let Some((fix, at, held)) = self.early_pending.take() {
+                        self.apply_early(fix, at, held, &rx);
                     }
                 }
             }
@@ -490,13 +511,61 @@ impl Worker {
             if let (Some(e), Some(c)) = (self.edit.as_mut(), key.char_in(lang)) {
                 e.text.push(c);
             }
+            if self.early.is_none() && self.edit.is_none() && !self.glued {
+                let input = WordInput { keys: self.word.keys(), lang, code_mode: self.mode == Mode::Code, prev: None };
+                self.early_pending = early_fix(&input, &self.dicts, &cfg).map(|f| (f, k.at, k.held));
+            }
         } else {
             self.reset();
         }
     }
 
+    fn apply_early(&mut self, fix: Fix, at: Instant, held: bool, rx: &Receiver<HookEvent>) {
+        let Some(to) = fix.to else { return };
+        let from = to.other();
+        if !held {
+            hook::hold();
+            hook::wait_idle();
+            if !rx.is_empty() {
+                return;
+            }
+        }
+        let (prev_typed, prev_out) = match self.prev.as_ref() {
+            Some(prev) if prev.lang == from && prev.sep == " " => {
+                short_alongside(&prev.keys, from).map(|alt| (render(&prev.keys, from) + " ", alt + " ")).unwrap_or_default()
+            }
+            _ => Default::default(),
+        };
+        if !prev_typed.is_empty() {
+            self.prev = None;
+        }
+        self.flush();
+        if let Some(thread) = lang::request(to) {
+            hook::SWITCH.time(|| lang::wait(to, thread));
+        }
+        hook::set_lang(Some(to));
+        self.batch.rewrite(&(prev_typed.clone() + &fix.typed), &(prev_out.clone() + &fix.text));
+        self.fix_started = Some(at);
+        self.word_lang = Some(to);
+        self.book.record(Action {
+            kind: fix.kind,
+            word: fix.typed.clone(),
+            typed: prev_typed.clone() + &fix.typed,
+            result: prev_out.clone() + &fix.text,
+            sep_before: String::new(),
+            sep_after: String::new(),
+            lang_before: from,
+            lang_after: to,
+        });
+        ARMED_UNDO.store(true, SeqCst);
+        self.emit(CoreEvent::Acted { kind: fix.kind, rule: Some(fix.rule), typed: fix.typed.clone(), result: fix.text.clone() });
+        self.early = Some(Early { lang_before: from, prev_typed, prev_out, undone: false });
+    }
+
     fn finish(&mut self, sep: Separator, enter_eaten: bool, started: Instant) {
         let glued = std::mem::take(&mut self.glued);
+        let early = self.early.take();
+        self.early_pending = None;
         let edit = self.edit.take();
         let tail = self.tail.take();
         let Some(lang) = self.word_lang.take().filter(|_| !self.word.is_empty()) else {
@@ -524,7 +593,7 @@ impl Worker {
         let keys = self.word.take();
         let (status, mode) = hook::EVALUATE.time(|| self.evaluate());
         let cfg = self.cfg();
-        let fix = (status == Status::Working && !keys.is_empty() && !glued && (sep != Separator::Enter || enter_eaten))
+        let fix = (status == Status::Working && !keys.is_empty() && !glued && (sep != Separator::Enter || enter_eaten) && !early.as_ref().is_some_and(|e| e.undone))
             .then(|| hook::DECIDE.time(|| decide(&WordInput { keys: &keys, lang, code_mode: mode == Mode::Code, prev: self.ctx.as_deref() }, &self.dicts, &cfg)))
             .flatten();
         let word_like = |t: &str| t.chars().all(|c| c.is_alphabetic() || c == '-') || t.chars().all(|c| c.is_ascii_digit());
@@ -540,7 +609,7 @@ impl Worker {
                 let to = fix.to.unwrap_or(lang);
                 let sep_out = sep.text(to);
                 let (prev_typed, prev_out) = match self.prev.take().as_ref() {
-                    Some(prev) if fix.to.is_some() && prev.lang == lang && prev.sep == " " => {
+                    Some(prev) if early.is_none() && fix.to.is_some() && prev.lang == lang && prev.sep == " " => {
                         short_alongside(&prev.keys, lang)
                             .map(|alt| (render(&prev.keys, lang) + " ", alt + " "))
                             .unwrap_or_default()
@@ -561,16 +630,29 @@ impl Worker {
                 if sep == Separator::Enter {
                     self.batch.enter();
                 } else {
-                    self.book.record(Action {
-                        kind: fix.kind,
-                        word: fix.typed.clone(),
-                        typed: typed_all,
-                        result: result_all,
-                        sep_before: sep_typed,
-                        sep_after: sep_out.clone(),
-                        lang_before: lang,
-                        lang_after: to,
-                    });
+                    let action = match early {
+                        Some(e) => Action {
+                            kind: fix.kind,
+                            word: render(&keys, e.lang_before),
+                            typed: e.prev_typed + &render(&keys, e.lang_before),
+                            result: e.prev_out + &result_all,
+                            sep_before: sep.text(e.lang_before),
+                            sep_after: sep_out.clone(),
+                            lang_before: e.lang_before,
+                            lang_after: to,
+                        },
+                        None => Action {
+                            kind: fix.kind,
+                            word: fix.typed.clone(),
+                            typed: typed_all,
+                            result: result_all,
+                            sep_before: sep_typed,
+                            sep_after: sep_out.clone(),
+                            lang_before: lang,
+                            lang_after: to,
+                        },
+                    };
+                    self.book.record(action);
                     ARMED_UNDO.store(true, SeqCst);
                 }
                 self.emit(CoreEvent::Acted { kind: fix.kind, rule: Some(fix.rule), typed: fix.typed.clone(), result: fix.text.clone() });
@@ -587,6 +669,28 @@ impl Worker {
                     self.learning.clear();
                 } else if status == Status::Working && !glued && sep != Separator::Enter && (mode != Mode::Code || lang == Lang::Ru) {
                     self.learn(&keys, lang);
+                }
+                if early.as_ref().is_some_and(|e| e.undone) {
+                    let core = split_tail(&render(&keys, lang), lang).0.to_string();
+                    if !core.is_empty() && self.book.note_undo(&core) {
+                        let mut c = (*cfg).clone();
+                        c.add_never(&core, NeverSource::Undo);
+                        self.save(c);
+                        self.emit(CoreEvent::NeverAdded(core));
+                    }
+                }
+                if let Some(e) = early.filter(|e| !e.undone && sep != Separator::Enter) {
+                    self.book.record(Action {
+                        kind: ActionKind::Layout,
+                        word: render(&keys, e.lang_before),
+                        typed: e.prev_typed + &render(&keys, e.lang_before),
+                        result: e.prev_out + &render(&keys, lang),
+                        sep_before: sep.text(e.lang_before),
+                        sep_after: sep_typed.clone(),
+                        lang_before: e.lang_before,
+                        lang_after: lang,
+                    });
+                    ARMED_UNDO.store(true, SeqCst);
                 }
                 if sep != Separator::Enter {
                     let shown = render(&keys, lang);
@@ -615,6 +719,13 @@ impl Worker {
         }
         self.batch.rewrite(&(action.result.clone() + &action.sep_after), &(action.typed.clone() + &action.sep_before));
         self.emit(CoreEvent::Undone);
+        if !self.word.is_empty() {
+            if let Some(e) = self.early.as_mut() {
+                e.undone = true;
+                self.word_lang = Some(action.lang_before);
+                return;
+            }
+        }
         let (core, _) = split_tail(&action.word, action.lang_before);
         let core = core.to_string();
         if self.book.note_undo(&core) {
@@ -626,6 +737,8 @@ impl Worker {
     }
 
     fn convert(&mut self) {
+        self.early = None;
+        self.early_pending = None;
         self.tail = None;
         self.edit = None;
         self.glued = false;

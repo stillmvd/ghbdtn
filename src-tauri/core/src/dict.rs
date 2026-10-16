@@ -20,9 +20,60 @@ pub struct Dictionaries {
     ru_ids: HashMap<Box<str>, u32>,
     en_ids: HashMap<Box<str>, u32>,
     ru_forms: Option<fst::Set<&'static [u8]>>,
+    ru_starts: fst::Set<Vec<u8>>,
+    en_starts: fst::Set<Vec<u8>>,
+    ru_sorted: Vec<(Box<str>, u32)>,
+    ru_total: f64,
+    en_sorted: Vec<(Box<str>, u32)>,
+    en_total: f64,
+    user_starts: HashSet<String>,
 }
 
 type ByFirst = HashMap<char, Vec<(Box<[char]>, u32)>>;
+
+fn norm(word: &str) -> String {
+    word.to_lowercase().replace('ё', "е")
+}
+
+fn starts_set<'a>(words: impl Iterator<Item = &'a str>) -> fst::Set<Vec<u8>> {
+    let mut all: Vec<String> = words.map(norm).filter(|w| !w.is_empty()).collect();
+    all.sort_unstable();
+    all.dedup();
+    fst::Set::from_iter(all).expect("sorted words")
+}
+
+fn has_start<D: AsRef<[u8]>>(set: &fst::Set<D>, prefix: &str) -> bool {
+    use fst::{IntoStreamer, Streamer};
+    let mut s = set.range().ge(prefix).into_stream();
+    s.next().is_some_and(|k| k.starts_with(prefix.as_bytes()))
+}
+
+fn sorted_freq(freq: &HashMap<Box<str>, u32>) -> Vec<(Box<str>, u32)> {
+    let mut merged: HashMap<String, u32> = HashMap::new();
+    for (w, &f) in freq {
+        *merged.entry(norm(w)).or_insert(0) += f;
+    }
+    let mut out: Vec<(Box<str>, u32)> = merged.into_iter().map(|(w, f)| (w.into(), f)).collect();
+    out.sort_unstable();
+    out
+}
+
+fn stems(dic: &str) -> impl Iterator<Item = (&str, &str)> {
+    dic.lines().map(|l| l.split_once('/').unwrap_or((l, "")))
+}
+
+fn en_prefixed(dic: &str) -> Vec<String> {
+    let pfx: Vec<(char, &str)> = include_str!("../data/en.aff")
+        .lines()
+        .filter_map(|l| {
+            let p: Vec<&str> = l.split_whitespace().collect();
+            (p.len() >= 4 && p[0] == "PFX" && p[2] == "0").then(|| (p[1].chars().next().unwrap_or(' '), p[3]))
+        })
+        .collect();
+    stems(dic)
+        .flat_map(|(stem, flags)| pfx.iter().filter(move |(f, _)| flags.contains(*f)).map(move |(_, p)| format!("{p}{stem}")))
+        .collect()
+}
 
 fn by_first(freq: &HashMap<Box<str>, u32>) -> ByFirst {
     let mut out: ByFirst = HashMap::new();
@@ -89,7 +140,28 @@ impl Dictionaries {
         let ids = |text: &str| text.lines().enumerate().map(|(i, w)| (w.into(), i as u32)).collect();
         let (ru_ids, en_ids) = (ids(include_str!("../data/ru.bigram.words")), ids(include_str!("../data/en.bigram.words")));
         let ru_forms = Some(fst::Set::new(include_bytes!("../data/ru.forms.fst").as_slice()).expect("ru forms"));
-        Dictionaries { ru, en, ru_by_first: by_first(&ru_freq), ru_freq, en_freq, extra: HashSet::new(), ru_ids, en_ids, ru_forms }
+        let (ru_dic, en_dic, it_dic) = (include_str!("../data/ru.dic"), include_str!("../data/en.dic"), include_str!("../data/ru-it.dic"));
+        let ru_starts = starts_set(ru_freq.keys().map(|w| &**w).chain(stems(ru_dic).map(|s| s.0)).chain(stems(it_dic).map(|s| s.0)));
+        let en_extra = en_prefixed(en_dic);
+        let en_starts = starts_set(en_freq.keys().map(|w| &**w).chain(stems(en_dic).map(|s| s.0)).chain(en_extra.iter().map(String::as_str)));
+        Dictionaries {
+            ru,
+            en,
+            ru_by_first: by_first(&ru_freq),
+            ru_sorted: sorted_freq(&ru_freq),
+            ru_total: ru_freq.values().map(|&f| f as f64).sum(),
+            en_sorted: sorted_freq(&en_freq),
+            en_total: en_freq.values().map(|&f| f as f64).sum(),
+            ru_freq,
+            en_freq,
+            extra: HashSet::new(),
+            ru_ids,
+            en_ids,
+            ru_forms,
+            ru_starts,
+            en_starts,
+            user_starts: HashSet::new(),
+        }
     }
 
     pub fn without_forms(mut self) -> Dictionaries {
@@ -104,6 +176,7 @@ impl Dictionaries {
             if w.chars().count() < 2 || w.starts_with('#') {
                 continue;
             }
+            self.user_starts.insert(norm(&w));
             if w.chars().all(|c| Lang::Ru.owns_letter(c) || c == '-') {
                 let map = flags.get_or_insert_with(ru_flags_by_suffix);
                 let chars: Vec<char> = w.chars().collect();
@@ -192,6 +265,28 @@ impl Dictionaries {
 
     pub fn is_form(&self, lang: Lang, word: &str) -> bool {
         lang == Lang::Ru && self.ru_forms.as_ref().is_some_and(|f| f.contains(word.to_lowercase().replace('ё', "е")))
+    }
+
+    pub fn start_possible(&self, lang: Lang, prefix: &str) -> bool {
+        let p = norm(prefix);
+        let set = match lang {
+            Lang::Ru => &self.ru_starts,
+            Lang::En => &self.en_starts,
+        };
+        has_start(set, &p)
+            || (lang == Lang::Ru && self.ru_forms.as_ref().is_some_and(|f| has_start(f, &p)))
+            || self.user_starts.iter().any(|w| w.starts_with(&p))
+            || self.extra.iter().any(|w| norm(w).starts_with(&p))
+    }
+
+    pub fn start_share(&self, lang: Lang, prefix: &str) -> f64 {
+        let p = norm(prefix);
+        let (list, total) = match lang {
+            Lang::Ru => (&self.ru_sorted, self.ru_total),
+            Lang::En => (&self.en_sorted, self.en_total),
+        };
+        let from = list.partition_point(|(w, _)| **w < *p);
+        list[from..].iter().take_while(|(w, _)| w.starts_with(&p)).map(|&(_, f)| f as f64).sum::<f64>() / total
     }
 
     pub fn known(&self, lang: Lang, word: &str) -> bool {
