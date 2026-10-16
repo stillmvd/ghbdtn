@@ -407,6 +407,22 @@ fn solid(word: &str, lang: Lang, dicts: &Dictionaries) -> bool {
     dicts.freq(lang, word) >= SOLID_FREQ || dicts.certain(lang, word)
 }
 
+fn weak_fix(typed: &str, lower: &str, chars: &[char], lang: Lang, dicts: &Dictionaries) -> Option<String> {
+    if lang != Lang::Ru || typed.chars().any(char::is_uppercase) {
+        return None;
+    }
+    let floor = WEAK_RATIO * dicts.freq(lang, lower).max(1);
+    let found: Vec<String> = edits(chars, lang)
+        .into_iter()
+        .filter(|(c, w)| *w <= MAX_WEIGHT && c != lower && solid(c, lang, dicts) && dicts.freq(lang, c) >= floor)
+        .map(|(c, _)| c)
+        .collect();
+    match found.as_slice() {
+        [one] => Some(one.clone()),
+        _ => None,
+    }
+}
+
 fn real_word_fix(typed: &str, chars: &[char], prev: Option<&str>, lang: Lang, dicts: &Dictionaries) -> Option<String> {
     let prev = prev?;
     if lang != Lang::Ru || typed.chars().any(char::is_uppercase) || !dicts.in_bigrams(lang, typed) || dicts.bigram(lang, prev, typed) > 0 {
@@ -449,6 +465,9 @@ pub fn fix_rule(typed: &str, prev: Option<&str>, lang: Lang, dicts: &Dictionarie
     if dicts.known(lang, &lower) && !dicts.certain(lang, &lower) && !dicts.is_form(lang, &lower) {
         if let Some(split) = split_fix(&chars, lang, dicts) {
             return Some((apply_case(typed, &split), Rule::SplitFix));
+        }
+        if let Some(w) = weak_fix(typed, &lower, &chars, lang, dicts) {
+            return Some((apply_case(typed, &w), Rule::WeakWord));
         }
     }
     if dicts.known(lang, typed) {
@@ -522,6 +541,31 @@ mod tests {
     fn dicts() -> &'static Dictionaries {
         static D: OnceLock<Dictionaries> = OnceLock::new();
         D.get_or_init(Dictionaries::load)
+    }
+
+    #[test]
+    fn weak_word() {
+        assert_eq!(fix_after("волт", None, Lang::Ru, dicts()).as_deref(), Some("вот"));
+        assert_eq!(fix_after("олько", None, Lang::Ru, dicts()).as_deref(), Some("только"));
+        assert_eq!(fix_after("вольт", None, Lang::Ru, dicts()), None);
+        assert_eq!(fix_after("herr", None, Lang::En, dicts()), None);
+    }
+
+    #[test]
+    #[ignore]
+    fn weak_words_report() {
+        for (lang, file) in [(Lang::Ru, "data/ru.freq"), (Lang::En, "data/en.freq")] {
+            let text = std::fs::read_to_string(format!("{}/{file}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+            let hits: Vec<String> = text
+                .lines()
+                .filter_map(|l| l.split(' ').next())
+                .filter_map(|w| match fix_rule(w, None, lang, dicts()) {
+                    Some((t, Rule::WeakWord)) => Some(format!("{w} {} → {t} {}", dicts().freq(lang, w), dicts().freq(lang, &t))),
+                    _ => None,
+                })
+                .collect();
+            println!("{lang:?}: {}\n{}", hits.len(), hits.join("\n"));
+        }
     }
 
     #[test]

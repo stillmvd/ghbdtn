@@ -37,10 +37,11 @@ pub enum Rule {
     CapsLock,
     DoubleCaps,
     Yo,
+    WeakWord,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 18] = [
+    pub const ALL: [Rule; 19] = [
         Rule::Replace,
         Rule::Layout,
         Rule::LayoutAfterShort,
@@ -59,6 +60,7 @@ impl Rule {
         Rule::CapsLock,
         Rule::DoubleCaps,
         Rule::Yo,
+        Rule::WeakWord,
     ];
 
     pub fn name(self) -> &'static str {
@@ -81,6 +83,7 @@ impl Rule {
             Rule::CapsLock => "caps_lock",
             Rule::DoubleCaps => "double_caps",
             Rule::Yo => "yo",
+            Rule::WeakWord => "weak_word",
         }
     }
 }
@@ -94,7 +97,7 @@ pub struct Fix {
     pub to: Option<Lang>,
 }
 
-const RISKY: [Rule; 5] = [Rule::Context, Rule::Joint, Rule::Lone, Rule::ShortFix, Rule::SplitFix];
+const RISKY: [Rule; 6] = [Rule::Context, Rule::Joint, Rule::Lone, Rule::ShortFix, Rule::SplitFix, Rule::WeakWord];
 
 pub fn allowed(rule: Rule, level: Sensitivity) -> bool {
     level != Sensitivity::Careful || !RISKY.contains(&rule)
