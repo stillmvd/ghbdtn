@@ -18,7 +18,8 @@
 **Testing**: `cargo test` (юнит + корпус `--test corpus`, `rule_stats`), стенд `core/examples/rivals.rs`,
 `core/examples/selftest.rs`, `pnpm check`
 **Target Platform**: Windows 11 x64
-**Performance Goals**: движок ≤ 15 мс ср от разделителя до конца `SendInput`; на экране p50 ≤ 40 мс; очередь 12/12
+**Performance Goals**: движок без `SendInput` ≤ 15 мс ср; на экране p50 ≤ 40 мс после Phase 4 (меньше событий);
+очередь 12/12
 **Constraints**: колбэк хука без работы (конституция II); приватность (I); ложных не больше (III); память ≤ 100 МБ
 **Scale/Scope**: ~11 фаз, одна DLL-крейт, правки ядра, UI настроек, оверлей
 

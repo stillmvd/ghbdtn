@@ -31,7 +31,7 @@ fn put(text: &str) -> bool {
     if clipboard_win::raw::set_string(text).is_err() {
         return false;
     }
-    for name in ["ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"] {
+    for name in ["ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory", "CanUploadToCloudClipboard", "Clipboard Viewer Ignore"] {
         if let Some(f) = clipboard_win::raw::register_format(name) {
             let _ = clipboard_win::raw::set_without_clear(f.get(), &0u32.to_le_bytes());
         }

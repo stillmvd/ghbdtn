@@ -540,13 +540,18 @@ impl Worker {
                 };
                 let typed_all = prev_typed + &fix.typed;
                 let result_all = prev_out + &fix.text;
+                let switching = fix.to.and_then(lang::request);
+                let sent = output::SENT.load(SeqCst);
                 hook::SEND.time(|| output::rewrite(&(typed_all.clone() + &sep_typed), &(result_all.clone() + &sep_out)));
+                hook::SEND.add_units(output::SENT.load(SeqCst) - sent);
                 let us = started.elapsed().as_micros() as u64;
                 hook::FIXES.fetch_add(1, SeqCst);
                 hook::FIX_US_TOTAL.fetch_add(us, SeqCst);
                 hook::FIX_US_MAX.fetch_max(us, SeqCst);
                 if fix.to.is_some() {
-                    hook::SWITCH.time(|| lang::switch(to));
+                    if let Some(thread) = switching {
+                        hook::SWITCH.time(|| lang::wait(to, thread));
+                    }
                     hook::set_lang(Some(to));
                 }
                 if sep == Separator::Enter {

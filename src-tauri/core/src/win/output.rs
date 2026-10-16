@@ -1,5 +1,8 @@
 use super::hook::{RawKey, MARK};
+use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
+
+pub static SENT: AtomicU64 = AtomicU64::new(0);
 
 fn key(vk: VIRTUAL_KEY, scan: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     INPUT {
@@ -16,6 +19,7 @@ fn tap(out: &mut Vec<INPUT>, vk: VIRTUAL_KEY) {
 }
 
 fn send(inputs: &[INPUT]) -> bool {
+    SENT.fetch_add(inputs.len() as u64, SeqCst);
     inputs.is_empty() || unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) } as usize == inputs.len()
 }
 

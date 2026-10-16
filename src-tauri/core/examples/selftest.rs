@@ -175,7 +175,8 @@ fn main() {
             hook::REPLAYED.load(SeqCst)
         ),
     );
-    println!("     шаги (ср/макс): {}", hook::profile());
+    let core_ms = hook::engine_ms_without_send();
+    report(&mut failed, core_ms <= 15.0, format!("движок без SendInput {core_ms:.2} мс ср (порог 15); шаги: {}", hook::profile()));
 
     clear(np);
     lang::switch(Lang::En);

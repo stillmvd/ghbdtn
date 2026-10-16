@@ -73,11 +73,20 @@ pub struct Stage {
     n: AtomicU64,
     total_us: AtomicU64,
     max_us: AtomicU64,
+    units: AtomicU64,
 }
 
 impl Stage {
     const fn new(name: &'static str) -> Stage {
-        Stage { name, n: AtomicU64::new(0), total_us: AtomicU64::new(0), max_us: AtomicU64::new(0) }
+        Stage { name, n: AtomicU64::new(0), total_us: AtomicU64::new(0), max_us: AtomicU64::new(0), units: AtomicU64::new(0) }
+    }
+
+    pub fn add_units(&self, n: u64) {
+        self.units.fetch_add(n, SeqCst);
+    }
+
+    pub fn per_unit_ms(&self) -> f64 {
+        self.total_us.load(SeqCst).checked_div(self.units.load(SeqCst)).unwrap_or(0) as f64 / 1000.0
     }
 
     pub fn add(&self, d: std::time::Duration) {
@@ -108,11 +117,17 @@ impl Stage {
 }
 
 pub fn profile() -> String {
-    STAGES
+    let stages = STAGES
         .iter()
         .map(|s| format!("{} {:.2}/{:.2} мс ×{}", s.name, s.avg_ms(), s.max_ms(), s.count()))
         .collect::<Vec<_>>()
-        .join(", ")
+        .join(", ");
+    format!("{stages}; SendInput {:.2} мс на событие; движок без SendInput {:.2} мс ср", SEND.per_unit_ms(), engine_ms_without_send())
+}
+
+pub fn engine_ms_without_send() -> f64 {
+    let fixes = FIXES.load(SeqCst);
+    FIX_US_TOTAL.load(SeqCst).saturating_sub(SEND.total_us.load(SeqCst)).checked_div(fixes).unwrap_or(0) as f64 / 1000.0
 }
 
 pub const MOD_SHIFT: u32 = 1 << 16;

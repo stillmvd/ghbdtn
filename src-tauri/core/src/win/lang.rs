@@ -32,7 +32,10 @@ pub fn focus_window() -> HWND {
 }
 
 pub fn current() -> Option<Lang> {
-    let (_, thread) = foreground_thread();
+    current_of(foreground_thread().1)
+}
+
+fn current_of(thread: u32) -> Option<Lang> {
     let hkl = unsafe { GetKeyboardLayout(thread) };
     if is_ime(hkl) {
         return None;
@@ -58,18 +61,26 @@ pub fn has_ru_en() -> bool {
     hkl_for(Lang::Ru).is_some() && hkl_for(Lang::En).is_some()
 }
 
-pub fn switch(lang: Lang) -> bool {
-    let Some(hkl) = hkl_for(lang) else { return false };
-    let target = focus_window();
-    unsafe {
-        let _ = PostMessageW(Some(target), WM_INPUTLANGCHANGEREQUEST, WPARAM(0), LPARAM(hkl.0 as isize));
-    }
+pub fn request(lang: Lang) -> Option<u32> {
+    let hkl = hkl_for(lang)?;
+    let thread = foreground_thread().1;
+    unsafe { PostMessageW(Some(focus_window()), WM_INPUTLANGCHANGEREQUEST, WPARAM(0), LPARAM(hkl.0 as isize)) }.ok()?;
+    Some(thread)
+}
+
+pub fn wait(lang: Lang, thread: u32) -> bool {
     let start = Instant::now();
-    while start.elapsed() < Duration::from_millis(50) {
-        if current() == Some(lang) {
+    loop {
+        if current_of(thread) == Some(lang) {
             return true;
         }
-        std::thread::sleep(Duration::from_millis(5));
+        if start.elapsed() >= Duration::from_millis(50) {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(1));
     }
-    false
+}
+
+pub fn switch(lang: Lang) -> bool {
+    request(lang).is_some_and(|thread| wait(lang, thread))
 }
