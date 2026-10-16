@@ -27,6 +27,7 @@ pub struct RawKey {
     pub win: bool,
     pub eaten: bool,
     pub held: bool,
+    pub counted: bool,
     pub at: std::time::Instant,
 }
 
@@ -39,7 +40,7 @@ pub enum HookEvent {
     Words,
 }
 
-pub static HOLD: AtomicBool = AtomicBool::new(false);
+static HOLD: AtomicU32 = AtomicU32::new(0);
 static HOLD_SINCE: AtomicU32 = AtomicU32::new(0);
 pub static ARMED_UNDO: AtomicBool = AtomicBool::new(false);
 pub static ENABLED: AtomicBool = AtomicBool::new(true);
@@ -193,31 +194,60 @@ fn take_eaten(vk: u16) -> bool {
 
 pub fn hold() {
     HOLD_SINCE.store(unsafe { GetTickCount() }, SeqCst);
-    HOLD.store(true, SeqCst);
+    HOLD.fetch_or(1, SeqCst);
 }
 
-fn holding() -> bool {
-    if !HOLD.load(SeqCst) {
+fn hold_counted(k: &mut RawKey) {
+    HOLD_SINCE.store(unsafe { GetTickCount() }, SeqCst);
+    let _ = HOLD.fetch_update(SeqCst, SeqCst, |s| Some((s | 1) + 2));
+    k.counted = true;
+}
+
+pub fn hold_state() -> u32 {
+    HOLD.load(SeqCst)
+}
+
+pub fn holding() -> bool {
+    HOLD.load(SeqCst) & 1 != 0
+}
+
+fn hold_key() -> bool {
+    if !holding() {
         return false;
     }
     if unsafe { GetTickCount() }.wrapping_sub(HOLD_SINCE.load(SeqCst)) > HOLD_LIMIT_MS {
-        HOLD.store(false, SeqCst);
+        HOLD.fetch_and(!1, SeqCst);
         return false;
     }
-    true
+    HOLD.fetch_update(SeqCst, SeqCst, |s| (s & 1 != 0).then(|| s + 2)).is_ok()
+}
+
+pub fn held_taken() {
+    let _ = HOLD.fetch_update(SeqCst, SeqCst, |s| s.checked_sub(2));
+}
+
+pub fn try_release() -> bool {
+    HOLD.compare_exchange(1, 0, SeqCst, SeqCst).is_ok()
+}
+
+fn push_key(k: RawKey) {
+    if !push(HookEvent::Key(k)) && k.counted {
+        held_taken();
+    }
 }
 
 fn down(vk: VIRTUAL_KEY) -> bool {
     unsafe { GetAsyncKeyState(vk.0 as i32) < 0 }
 }
 
-fn push(ev: HookEvent) {
-    if let Some(tx) = SENDER.get() {
-        EVENTS.fetch_add(1, SeqCst);
-        if tx.try_send(ev).is_err() {
-            DROPPED.fetch_add(1, SeqCst);
-        }
+fn push(ev: HookEvent) -> bool {
+    let Some(tx) = SENDER.get() else { return false };
+    EVENTS.fetch_add(1, SeqCst);
+    let ok = tx.try_send(ev).is_ok();
+    if !ok {
+        DROPPED.fetch_add(1, SeqCst);
     }
+    ok
 }
 
 fn is_modifier(vk: u16) -> bool {
@@ -262,6 +292,7 @@ fn on_key(kb: &KBDLLHOOKSTRUCT) -> bool {
         win: down(VK_LWIN) || down(VK_RWIN),
         eaten: false,
         held: false,
+        counted: false,
         at: std::time::Instant::now(),
     };
     if up && take_eaten(vk) {
@@ -269,9 +300,10 @@ fn on_key(kb: &KBDLLHOOKSTRUCT) -> bool {
         push(HookEvent::Key(k));
         return true;
     }
-    if holding() {
+    if hold_key() {
         k.held = true;
-        push(HookEvent::Key(k));
+        k.counted = true;
+        push_key(k);
         return true;
     }
     if up {
@@ -284,7 +316,7 @@ fn on_key(kb: &KBDLLHOOKSTRUCT) -> bool {
         || (vk == VK_BACK.0 && k.ctrl && !k.alt && ARMED_UNDO.load(SeqCst))
         || (vk == VK_RETURN.0 && active && PENDING.load(SeqCst) && !k.ctrl && !k.alt);
     if held {
-        hold();
+        hold_counted(&mut k);
     }
     let eat = toggle || held;
     if !(is_modifier(vk) || vk == VK_BACK.0 && eat) {
@@ -294,7 +326,7 @@ fn on_key(kb: &KBDLLHOOKSTRUCT) -> bool {
         PENDING.store(false, SeqCst);
         set_eaten(vk);
         k.eaten = true;
-        push(HookEvent::Key(k));
+        push_key(k);
         return true;
     }
     if !is_modifier(vk) {
@@ -303,7 +335,7 @@ fn on_key(kb: &KBDLLHOOKSTRUCT) -> bool {
             _ if k.ctrl || k.alt || k.win => PENDING.store(false, SeqCst),
             Some(l) if separator_kind(key, l).is_some() => {
                 if active && PENDING.swap(false, SeqCst) {
-                    hold();
+                    hold_counted(&mut k);
                 }
             }
             Some(l) if key.char_in(l).is_some() => PENDING.store(true, SeqCst),
@@ -311,7 +343,7 @@ fn on_key(kb: &KBDLLHOOKSTRUCT) -> bool {
             _ => PENDING.store(false, SeqCst),
         }
     }
-    push(HookEvent::Key(k));
+    push_key(k);
     false
 }
 
@@ -433,6 +465,43 @@ mod tests {
         assert!(!foreign(&kb(LLKHF_INJECTED, TEST_MARK)));
         assert!(foreign(&kb(LLKHF_INJECTED, 0)));
         ACCEPT_TEST.store(false, SeqCst);
+    }
+
+    #[test]
+    fn hold_releases_only_after_held_keys_taken() {
+        assert!(!hold_key());
+        hold();
+        assert!(hold_key());
+        assert!(hold_key());
+        assert!(!try_release());
+        held_taken();
+        assert!(!try_release());
+        held_taken();
+        assert!(try_release());
+        assert!(!holding());
+        assert!(!hold_key());
+        held_taken();
+        assert_eq!(HOLD.load(SeqCst), 0);
+
+        let mut trigger = RawKey {
+            vk: VK_SPACE.0,
+            scan: 0x39,
+            up: false,
+            extended: false,
+            shift: false,
+            ctrl: false,
+            alt: false,
+            win: false,
+            eaten: false,
+            held: false,
+            counted: false,
+            at: std::time::Instant::now(),
+        };
+        hold_counted(&mut trigger);
+        assert!(trigger.counted && holding());
+        assert!(!try_release());
+        held_taken();
+        assert!(try_release());
     }
 
     #[test]

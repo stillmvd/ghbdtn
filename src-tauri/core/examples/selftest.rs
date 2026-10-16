@@ -241,7 +241,8 @@ fn main() {
     report(&mut failed, got == "hello привет ", format!("двойной пробел ⌫ → {got:?}"));
 
     let dropped = hook::DROPPED.load(SeqCst);
-    report(&mut failed, dropped == 0 && hook::REINSTALLS.load(SeqCst) == 0, format!("всего: потеряно {dropped}, переустановок {}", hook::REINSTALLS.load(SeqCst)));
+    std::thread::sleep(Duration::from_millis(300));
+    report(&mut failed, dropped == 0 && hook::REINSTALLS.load(SeqCst) == 0 && hook::hold_state() == 0, format!("всего: потеряно {dropped}, переустановок {}, задержка {}", hook::REINSTALLS.load(SeqCst), hook::hold_state()));
 
     while let Ok(ev) = rx.try_recv() {
         if let CoreEvent::Status(s) = ev {

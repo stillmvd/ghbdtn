@@ -14,8 +14,8 @@ use crate::word::{render, separator_kind, Key, Separator, Word};
 use crate::words::learnable;
 use arc_swap::ArcSwap;
 use crossbeam_channel::{bounded, Receiver, RecvTimeoutError, Sender};
-use hook::{HookEvent, RawKey, ALLOWED, ARMED_UNDO, ENABLED, HOLD, PENDING};
-use std::collections::{HashMap, VecDeque};
+use hook::{HookEvent, RawKey, ALLOWED, ARMED_UNDO, ENABLED, PENDING};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::SeqCst;
@@ -145,7 +145,8 @@ struct Worker {
     learning: HashMap<String, u8>,
     book: UndoBook,
     caps: bool,
-    backlog: VecDeque<HookEvent>,
+    batch: output::Batch,
+    fix_started: Option<Instant>,
     status: Option<Status>,
     last_key: Instant,
     last_watch: Instant,
@@ -193,7 +194,8 @@ impl Worker {
             learning: HashMap::new(),
             book: UndoBook::default(),
             caps: unsafe { GetKeyState(VK_CAPITAL.0 as i32) } & 1 != 0,
-            backlog: VecDeque::new(),
+            batch: output::Batch::default(),
+            fix_started: None,
             status: None,
             last_key: Instant::now(),
             last_watch: Instant::now(),
@@ -307,33 +309,41 @@ impl Worker {
     fn run(mut self, rx: Receiver<HookEvent>) {
         self.evaluate();
         loop {
-            let ev = match self.backlog.pop_front() {
-                Some(ev) => ev,
-                None => match rx.recv_timeout(Duration::from_millis(500)) {
-                    Ok(ev) => ev,
-                    Err(RecvTimeoutError::Timeout) => {
-                        self.tick();
-                        continue;
-                    }
-                    Err(RecvTimeoutError::Disconnected) => return,
-                },
+            let ev = match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(ev) => ev,
+                Err(RecvTimeoutError::Timeout) => {
+                    self.tick();
+                    continue;
+                }
+                Err(RecvTimeoutError::Disconnected) => return,
             };
             match ev {
-                HookEvent::Foreign | HookEvent::Click => self.reset(),
+                HookEvent::Foreign | HookEvent::Click => {
+                    self.flush();
+                    self.reset();
+                }
                 HookEvent::Words => self.take_words(),
                 HookEvent::Focus => {
+                    self.flush();
                     self.reset();
                     self.evaluate();
                 }
                 HookEvent::Key(k) => {
                     self.last_key = Instant::now();
+                    if k.counted {
+                        hook::held_taken();
+                    }
+                    if k.held {
+                        hook::REPLAYED.fetch_add(1, SeqCst);
+                        self.batch.replay(&k);
+                    }
                     if !k.up {
-                        self.key(k, &rx);
+                        self.key(k);
                     }
                 }
             }
-            if HOLD.load(SeqCst) && self.backlog.is_empty() {
-                self.release(&rx);
+            if rx.is_empty() {
+                self.settle();
             }
         }
     }
@@ -382,32 +392,32 @@ impl Worker {
         }
     }
 
-    fn release(&mut self, rx: &Receiver<HookEvent>) {
-        let mut replay: Vec<RawKey> = Vec::new();
-        let drain = |this: &mut Worker, replay: &mut Vec<RawKey>| {
-            while let Ok(ev) = rx.try_recv() {
-                let ev = match ev {
-                    HookEvent::Key(mut k) if k.held => {
-                        replay.push(k);
-                        k.held = false;
-                        HookEvent::Key(k)
-                    }
-                    other => other,
-                };
-                this.backlog.push_back(ev);
-            }
-        };
-        drain(self, &mut replay);
-        hook::REPLAYED.fetch_add(replay.len() as u64, SeqCst);
-        output::replay(&replay);
-        replay.clear();
-        HOLD.store(false, SeqCst);
-        drain(self, &mut replay);
-        hook::REPLAYED.fetch_add(replay.len() as u64, SeqCst);
-        output::replay(&replay);
+    fn flush(&mut self) {
+        if self.batch.is_empty() {
+            return;
+        }
+        let events = self.batch.len() as u64;
+        let t = Instant::now();
+        self.batch.send();
+        if let Some(started) = self.fix_started.take() {
+            hook::SEND.add(t.elapsed());
+            hook::SEND.add_units(events);
+            let us = started.elapsed().as_micros() as u64;
+            hook::FIXES.fetch_add(1, SeqCst);
+            hook::FIX_US_TOTAL.fetch_add(us, SeqCst);
+            hook::FIX_US_MAX.fetch_max(us, SeqCst);
+        }
     }
 
-    fn key(&mut self, k: RawKey, rx: &Receiver<HookEvent>) {
+    fn settle(&mut self) {
+        self.flush();
+        if hook::holding() {
+            PENDING.store(!self.word.is_empty(), SeqCst);
+            hook::try_release();
+        }
+    }
+
+    fn key(&mut self, k: RawKey) {
         let vk = VIRTUAL_KEY(k.vk);
         let cfg = self.cfg();
         if k.eaten {
@@ -424,7 +434,6 @@ impl Worker {
             } else {
                 self.convert();
             }
-            self.release(rx);
             return;
         }
         if vk == VK_CAPITAL {
@@ -496,7 +505,7 @@ impl Worker {
                 self.ctx = None;
             }
             if enter_eaten {
-                output::enter();
+                self.batch.enter();
             }
             if sep != Separator::Enter {
                 self.tail = lang::current().map(|l| {
@@ -540,22 +549,17 @@ impl Worker {
                 };
                 let typed_all = prev_typed + &fix.typed;
                 let result_all = prev_out + &fix.text;
-                let switching = fix.to.and_then(lang::request);
-                let sent = output::SENT.load(SeqCst);
-                hook::SEND.time(|| output::rewrite(&(typed_all.clone() + &sep_typed), &(result_all.clone() + &sep_out)));
-                hook::SEND.add_units(output::SENT.load(SeqCst) - sent);
-                let us = started.elapsed().as_micros() as u64;
-                hook::FIXES.fetch_add(1, SeqCst);
-                hook::FIX_US_TOTAL.fetch_add(us, SeqCst);
-                hook::FIX_US_MAX.fetch_max(us, SeqCst);
+                self.flush();
                 if fix.to.is_some() {
-                    if let Some(thread) = switching {
+                    if let Some(thread) = lang::request(to) {
                         hook::SWITCH.time(|| lang::wait(to, thread));
                     }
                     hook::set_lang(Some(to));
                 }
+                self.batch.rewrite(&(typed_all.clone() + &sep_typed), &(result_all.clone() + &sep_out));
+                self.fix_started = Some(started);
                 if sep == Separator::Enter {
-                    output::enter();
+                    self.batch.enter();
                 } else {
                     self.book.record(Action {
                         kind: fix.kind,
@@ -577,7 +581,7 @@ impl Worker {
             }
             None => {
                 if enter_eaten {
-                    output::enter();
+                    self.batch.enter();
                 }
                 if !cfg.learn {
                     self.learning.clear();
@@ -600,15 +604,16 @@ impl Worker {
         ARMED_UNDO.store(false, SeqCst);
         let Some(action) = self.book.take() else {
             if !k.shift && !k.alt {
-                output::chord(VK_CONTROL, VK_BACK);
+                self.batch.chord(VK_CONTROL, VK_BACK);
             }
             return;
         };
-        output::rewrite(&(action.result.clone() + &action.sep_after), &(action.typed.clone() + &action.sep_before));
+        self.flush();
         if action.lang_before != action.lang_after {
             lang::switch(action.lang_before);
             hook::set_lang(Some(action.lang_before));
         }
+        self.batch.rewrite(&(action.result.clone() + &action.sep_after), &(action.typed.clone() + &action.sep_before));
         self.emit(CoreEvent::Undone);
         let (core, _) = split_tail(&action.word, action.lang_before);
         let core = core.to_string();
@@ -637,9 +642,10 @@ impl Worker {
         let typed = render(&keys, lang);
         let result = render(&keys, to);
         let sep_out = convert_text(&sep, lang);
-        output::rewrite(&(typed.clone() + &sep), &(result.clone() + &sep_out));
+        self.flush();
         lang::switch(to);
         hook::set_lang(Some(to));
+        self.batch.rewrite(&(typed.clone() + &sep), &(result.clone() + &sep_out));
         self.book.record(Action {
             kind: ActionKind::Manual,
             word: typed.clone(),
@@ -655,6 +661,7 @@ impl Worker {
     }
 
     fn convert_selection(&mut self) {
+        self.flush();
         let Some((text, saved)) = clipboard::copy_selection() else { return };
         let Some(from) = script_of(&text) else { return };
         let result = convert_text(&text, from);

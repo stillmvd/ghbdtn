@@ -232,7 +232,7 @@ fn main() {
         "engine_ms_avg": hook::FIX_US_TOTAL.load(SeqCst).checked_div(hook::FIXES.load(SeqCst)).unwrap_or(0) as f64 / 1000.0,
         "engine_ms_max": hook::FIX_US_MAX.load(SeqCst) as f64 / 1000.0,
         "replayed": hook::REPLAYED.load(SeqCst), "dropped": hook::DROPPED.load(SeqCst),
-        "engine_ms_without_send": hook::engine_ms_without_send(), "send_ms_per_event": hook::SEND.per_unit_ms(),
+        "engine_ms_without_send": hook::engine_ms_without_send(), "send_ms_per_event": hook::SEND.per_unit_ms(), "hold_left": hook::hold_state(),
         "stages": hook::STAGES.iter().map(|s| (s.name.to_string(), serde_json::json!({"n": s.count(), "avg_ms": s.avg_ms(), "max_ms": s.max_ms()}))).collect::<serde_json::Map<_, _>>(),
     });
     println!("{summary}");
