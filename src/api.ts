@@ -7,13 +7,20 @@ export type Config = {
   autostart: boolean;
   journal: boolean;
   learn: boolean;
-  features: { layout: boolean; typos: boolean; replace: boolean; early: boolean };
+  features: { layout: boolean; typos: boolean; replace: boolean; early: boolean; caps: boolean; yo: boolean; double_shift: boolean };
   signals: { hint: boolean; blink: boolean; sound: boolean; cursor: boolean };
   hotkeys: { convert: string; toggle: string };
   replacements: Record<string, string>;
   never: NeverWord[];
   processes: { off: string[]; code: string[] };
+  sensitivity: Sensitivity;
+  programs: Program[];
 };
+
+export type Sensitivity = "careful" | "normal" | "bold";
+export type Insert = "unicode" | "paste" | "keys";
+export type Switch = "message" | "hotkey" | "thread";
+export type Program = { exe: string; insert: Insert; switch: Switch; delay_ms: number; retries: number };
 
 export type ConfigError = { field: string; message: string };
 

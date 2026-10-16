@@ -2,17 +2,18 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { checkNow, installNow, UpdateBadge, UpdateToast, useShip } from "@stillmvd/tauri-ship";
-import { api, errorsOf, plural, type About, type Config, type ConfigError, type Proc } from "../api";
+import { api, errorsOf, plural, type About, type Config, type ConfigError, type Insert, type Proc, type Program, type Sensitivity, type Switch } from "../api";
 import { AppMark, Icon, Kbd, Toggle } from "../Icon";
 import "./settings.css";
 
-type Sec = "main" | "repl" | "never" | "dict" | "proc" | "keys" | "about";
+type Sec = "main" | "repl" | "never" | "dict" | "proc" | "prog" | "keys" | "about";
 const NAV: [Sec, string, string][] = [
   ["main", "Основное", "settings"],
   ["repl", "Замены", "repl"],
   ["never", "Не трогать", "eyeOff"],
   ["dict", "Словарь", "book"],
   ["proc", "Исключения", "app"],
+  ["prog", "Программы", "swap"],
   ["keys", "Клавиши", "keyboard"],
   ["about", "О программе", "info"],
 ];
@@ -43,6 +44,12 @@ const Err = ({ list, prefix }: { list: ConfigError[]; prefix: string }) => {
   return e ? <p className="t-field-msg err">{e.message}</p> : null;
 };
 
+const LEVELS: [Sensitivity, string, string][] = [
+  ["careful", "Осторожно", "Меньше правок, почти без ошибок"],
+  ["normal", "Обычно", "Правит, когда уверен"],
+  ["bold", "Смело", "Раньше правит раскладку"],
+];
+
 function Main({ cfg, save }: Ctx) {
   const f = (k: keyof Config["features"]) => (v: boolean) => save({ ...cfg, features: { ...cfg.features, [k]: v } });
   const g = (k: keyof Config["signals"]) => (v: boolean) => save({ ...cfg, signals: { ...cfg.signals, [k]: v } });
@@ -55,6 +62,16 @@ function Main({ cfg, save }: Ctx) {
             <Row title="Раскладку" sub="ghbdtn → привет"><Toggle on={cfg.features.layout} label="Раскладку" onChange={f("layout")} /></Row>
             <Row title="Опечатки" sub="ввожа → ввода"><Toggle on={cfg.features.typos} label="Опечатки" onChange={f("typos")} /></Row>
             <Row title="Замены" sub="чето → чё-то"><Toggle on={cfg.features.replace} label="Замены" onChange={f("replace")} /></Row>
+            <div className="t-setrow st-lvl">
+              <span className="tx"><b>Смелость</b><span>{LEVELS.find(([k]) => k === cfg.sensitivity)?.[2]}</span></span>
+              <span className="t-seg" role="group" aria-label="Смелость">
+                {LEVELS.map(([k, l]) => <button key={k} type="button" aria-pressed={cfg.sensitivity === k} onClick={() => save({ ...cfg, sensitivity: k })}>{l}</button>)}
+              </span>
+            </div>
+          </Group>
+          <Group label="Тонкости">
+            <Row title="Caps Lock" sub="hELLO → Hello, Caps выключится"><Toggle on={cfg.features.caps} label="Caps Lock" onChange={f("caps")} /></Row>
+            <Row title="Ё" sub="еще → ещё"><Toggle on={cfg.features.yo} label="Ё" onChange={f("yo")} /></Row>
           </Group>
           <Group label="Windows">
             <Row title="Запускать с Windows"><Toggle on={cfg.autostart} label="Запускать с Windows" onChange={(v) => save({ ...cfg, autostart: v })} /></Row>
@@ -207,6 +224,58 @@ function Procs(ctx: Ctx) {
   );
 }
 
+const INSERTS: [Insert, string][] = [["unicode", "Обычно"], ["paste", "Буфер"], ["keys", "Клавишами"]];
+const SWITCHES: [Switch, string][] = [["message", "Сообщение"], ["hotkey", "Сочетание"], ["thread", "Изнутри"]];
+
+function Pick<T extends string>({ value, items, label, onChange }: { value: T; items: [T, string][]; label: string; onChange: (v: T) => void }) {
+  return (
+    <label className="t-field gb-sel">
+      <select value={value} aria-label={label} onChange={(e) => onChange(e.target.value as T)}>
+        {items.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
+      <Icon name="chev" />
+    </label>
+  );
+}
+
+function Programs({ cfg, save }: Ctx) {
+  const [val, setVal] = useState("");
+  const [procs, setProcs] = useState<Proc[]>([]);
+  useEffect(() => { api.listProcesses().then(setProcs).catch(() => {}); }, []);
+  const list = cfg.programs;
+  const set = (next: Program[]) => save({ ...cfg, programs: next });
+  const raw = val.trim().toLowerCase();
+  const exe = !raw || raw.endsWith(".exe") ? raw : `${raw}.exe`;
+  const has = exe === ".exe" || list.some((p) => p.exe === exe);
+  const add = async () => {
+    if (!exe || has) return;
+    if (await set([...list, { exe, insert: "unicode", switch: "message", delay_ms: 0, retries: 2 }])) setVal("");
+  };
+  const edit = (exe: string, patch: Partial<Program>) => set(list.map((p) => (p.exe === exe ? { ...p, ...patch } : p)));
+  return (
+    <>
+      <div className="st-add-wrap">
+        <form className="st-add" onSubmit={(e) => { e.preventDefault(); add(); }}>
+          <label className="t-field"><input id="prog-add" list="procs-prog" value={val} onChange={(e) => setVal(e.target.value)} placeholder="Программа, например telegram.exe" aria-label="Программа" /></label>
+          <datalist id="procs-prog">{procs.filter((p) => !list.some((x) => x.exe === p.exe)).map((p) => <option key={p.exe} value={p.exe}>{p.title}</option>)}</datalist>
+          <button type="submit" className="t-btn p" disabled={!exe || has}><Icon name="plus" />Добавить</button>
+        </form>
+      </div>
+      <Group label="Особые программы" extra={<span className="n">{list.length}</span>} note="Как вставлять исправление и как менять раскладку там, где обычный способ не срабатывает">
+        <div className="st-pt">
+          <span className="hd"><span>Программа</span><span>Вставка</span><span>Раскладка</span><span /></span>
+          {list.map((p) => (
+            <span key={p.exe}><span className="gb-mono" title={p.exe}>{p.exe}</span>
+              <Pick value={p.insert} items={INSERTS} label={`Вставка в ${p.exe}`} onChange={(v) => edit(p.exe, { insert: v })} />
+              <Pick value={p.switch} items={SWITCHES} label={`Раскладка в ${p.exe}`} onChange={(v) => edit(p.exe, { switch: v })} />
+              <button type="button" className="gb-x" aria-label={`Удалить ${p.exe}`} onClick={() => set(list.filter((x) => x.exe !== p.exe))}><Icon name="x" /></button></span>
+          ))}
+        </div>
+      </Group>
+    </>
+  );
+}
+
 const MODS = new Set(["Control", "Shift", "Alt", "Meta"]);
 function keyName(e: KeyboardEvent): string | null {
   if (MODS.has(e.key)) return null;
@@ -245,6 +314,9 @@ function Keys({ cfg, save, errors }: Ctx) {
       <Row title="Выключить и включить"><Kbd keys={cfg.hotkeys.toggle} />{change("toggle")}</Row>
       <Err list={errors} prefix="hotkeys.toggle" />
       <Row title="Отменить исправление" sub="сразу после исправления"><Kbd keys="Ctrl+Backspace" /></Row>
+      <Row title="Двойной Shift" sub="тоже отменяет — два коротких нажатия">
+        <Toggle on={cfg.features.double_shift} label="Двойной Shift" onChange={(v) => save({ ...cfg, features: { ...cfg.features, double_shift: v } })} />
+      </Row>
     </div>
   );
 }
@@ -315,7 +387,7 @@ export function Settings() {
 
   const ctx: Ctx | null = cfg && { cfg, save, errors, setCfg };
   const general = errors.filter((e) => !e.field.startsWith("replacements") && !e.field.startsWith("hotkeys"));
-  const Body = { main: Main, repl: Repl, never: Never, dict: Dict, proc: Procs, keys: Keys, about: AboutSec }[sec];
+  const Body = { main: Main, repl: Repl, never: Never, dict: Dict, proc: Procs, prog: Programs, keys: Keys, about: AboutSec }[sec];
 
   return (
     <div className="st">
