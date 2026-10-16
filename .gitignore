@@ -11,3 +11,4 @@ Thumbs.db
 .specify/
 CLAUDE.md
 HANDOFF.md
+__pycache__/

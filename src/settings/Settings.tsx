@@ -3,7 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { checkNow, installNow, UpdateBadge, UpdateToast, useShip } from "@stillmvd/tauri-ship";
 import { api, errorsOf, plural, type About, type Config, type ConfigError, type Proc } from "../api";
-import { Icon, Kbd, Mark, Toggle } from "../Icon";
+import { AppMark, Icon, Kbd, Toggle } from "../Icon";
 import "./settings.css";
 
 type Sec = "main" | "repl" | "never" | "dict" | "proc" | "keys" | "about";
@@ -281,7 +281,7 @@ function AboutSec() {
   if (!a) return null;
   return (
     <>
-      <Row title={`Ghbdtn ${a.version}`} sub="Набранный текст не пишется на диск и никуда не отправляется"><Mark /></Row>
+      <Row title={`Ghbdtn ${a.version}`} sub="Набранный текст не пишется на диск и никуда не отправляется"><AppMark className="gb-mk" /></Row>
       <Updates />
       <Group label="Словари">
         {a.licenses.map((l) => <Row key={l.name} title={l.name} sub={`${l.source} · ${l.license}`}><span /></Row>)}
@@ -320,7 +320,7 @@ export function Settings() {
   return (
     <div className="st">
       <div className="t-titlebar" data-tauri-drag-region>
-        <Mark className="st-mk" />
+        <AppMark className="st-mk" />
         <span className="name" data-tauri-drag-region>Ghbdtn</span>
         <span className="sp" data-tauri-drag-region />
         <UpdateBadge />

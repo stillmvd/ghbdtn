@@ -1,3 +1,5 @@
+import appMark from "../brand/logo/mark-small.svg";
+
 const PATHS: Record<string, string> = {
   settings: "M20 7h-9M14 17H5M20 17a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM10 7a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
   x: "M18 6 6 18M6 6l12 12",
@@ -32,6 +34,10 @@ export function Mark({ look = "on", ru = true, className = "gb-mk" }: { look?: "
       <text x="8" y="11.1" textAnchor="middle" fontFamily="Segoe UI, sans-serif" fontSize="8.2" letterSpacing="-0.2" fontWeight="700" fill={ink}>{ru ? "RU" : "EN"}</text>
     </svg>
   );
+}
+
+export function AppMark({ className }: { className: string }) {
+  return <img className={className} src={appMark} alt="" />;
 }
 
 export function Kbd({ keys }: { keys: string }) {
