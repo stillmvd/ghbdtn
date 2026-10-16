@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as KeyEv, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { checkNow, installNow, UpdateBadge, UpdateToast, useShip } from "@stillmvd/tauri-ship";
@@ -228,13 +228,61 @@ const INSERTS: [Insert, string][] = [["unicode", "Обычно"], ["paste", "Б�
 const SWITCHES: [Switch, string][] = [["message", "Сообщение"], ["hotkey", "Сочетание"], ["thread", "Изнутри"]];
 
 function Pick<T extends string>({ value, items, label, onChange }: { value: T; items: [T, string][]; label: string; onChange: (v: T) => void }) {
+  const [at, setAt] = useState<{ x: number; y: number; w: number; up: boolean } | null>(null);
+  const btn = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const current = items.find(([k]) => k === value)?.[1] ?? value;
+  const open = () => {
+    const r = btn.current!.getBoundingClientRect();
+    const up = r.bottom + 4 + items.length * 38 + 12 > innerHeight - 8;
+    setAt({ x: r.left, y: up ? r.top - 4 : r.bottom + 4, w: r.width, up });
+  };
+  const close = (refocus: boolean) => { setAt(null); if (refocus) btn.current?.focus(); };
+  useEffect(() => {
+    if (!at) return;
+    menu.current?.querySelector<HTMLElement>('[aria-checked="true"]')?.focus();
+    const outside = (e: Event) => { if (!menu.current?.contains(e.target as Node) && !btn.current?.contains(e.target as Node)) setAt(null); };
+    const gone = () => setAt(null);
+    addEventListener("pointerdown", outside, true);
+    addEventListener("scroll", gone, true);
+    addEventListener("resize", gone);
+    addEventListener("blur", gone);
+    return () => {
+      removeEventListener("pointerdown", outside, true);
+      removeEventListener("scroll", gone, true);
+      removeEventListener("resize", gone);
+      removeEventListener("blur", gone);
+    };
+  }, [at]);
+  const keys = (e: KeyEv) => {
+    const list = [...(menu.current?.querySelectorAll<HTMLElement>("button") ?? [])];
+    const i = list.indexOf(document.activeElement as HTMLElement);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      list[(i + (e.key === "ArrowDown" ? 1 : list.length - 1)) % list.length]?.focus();
+    } else if (e.key === "Escape" || e.key === "Tab") {
+      e.preventDefault();
+      close(true);
+    }
+  };
+  const pick = (k: T) => { close(true); if (k !== value) onChange(k); };
   return (
-    <label className="t-field gb-sel">
-      <select value={value} aria-label={label} onChange={(e) => onChange(e.target.value as T)}>
-        {items.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-      </select>
-      <Icon name="chev" />
-    </label>
+    <>
+      <button ref={btn} type="button" className="t-field gb-sel" aria-haspopup="menu" aria-expanded={!!at} aria-label={`${label}: ${current}`}
+        onClick={() => (at ? close(false) : open())}
+        onKeyDown={(e) => { if (!at && (e.key === "ArrowDown" || e.key === "ArrowUp")) { e.preventDefault(); open(); } }}>
+        <span>{current}</span><Icon name="chev" />
+      </button>
+      {at && (
+        <div ref={menu} className={`t-menu gb-pick${at.up ? " up" : ""}`} role="menu" aria-label={label} style={{ left: at.x, top: at.y, minWidth: at.w }} onKeyDown={keys}>
+          {items.map(([k, l]) => (
+            <button key={k} type="button" role="menuitemradio" aria-checked={k === value} onClick={() => pick(k)}>
+              {l}{k === value && <Icon name="check" className="ck" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 

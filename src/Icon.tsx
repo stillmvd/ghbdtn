@@ -14,6 +14,7 @@ const PATHS: Record<string, string> = {
   search: "M17.5 11a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0ZM16 16l4 4",
   swap: "M4 8h15l-3.5-3.5M20 16H5l3.5 3.5",
   chev: "m6 9 6 6 6-6",
+  check: "M5 12.5 10 17.5 19 7",
   restart: "M20 12a8 8 0 1 1-2.3-5.7M20 4v4.5h-4.5",
 };
 

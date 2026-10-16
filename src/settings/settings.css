@@ -36,10 +36,17 @@
 .st-pt > span { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.2fr) 32px; align-items: center; gap: 8px; min-height: 44px; padding: 0 6px 0 20px; border-radius: var(--radius-full); background: var(--raised); }
 .st-pt > span.hd { min-height: 24px; background: none; color: var(--dim); font-size: 12px; }
 .st-pt .gb-mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gb-sel { position: relative; height: 32px; padding: 0; background: var(--cosmic); }
-.gb-sel select { appearance: none; height: 100%; padding: 0 30px 0 12px; font-size: 13px; cursor: pointer; text-overflow: ellipsis; }
-.gb-sel select option { background: var(--cosmic); color: var(--fg); }
-.gb-sel .gb-ic { position: absolute; right: 10px; width: 14px; height: 14px; color: var(--dim); pointer-events: none; }
+.gb-sel { justify-content: space-between; width: 100%; height: 32px; padding: 0 10px 0 12px; border: 0; background: var(--cosmic); color: var(--fg); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+.gb-sel:hover, .gb-sel[aria-expanded="true"] { background: var(--hover-strong); }
+.gb-sel > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gb-sel .gb-ic { flex: none; width: 14px; height: 14px; color: var(--dim); transition: rotate var(--dur-hover) var(--ease); }
+.gb-sel[aria-expanded="true"] .gb-ic { rotate: 180deg; }
+.gb-pick { position: fixed; animation: gb-pick var(--dur-hover) var(--ease) both; }
+.gb-pick.up { translate: 0 -100%; transform-origin: bottom left; }
+.gb-pick > button:focus-visible { background: var(--hover-strong); }
+.gb-pick .ck { width: 14px; height: 14px; margin-left: auto; color: var(--gb); }
+@keyframes gb-pick { from { opacity: 0; scale: .96; } }
+@media (prefers-reduced-motion: reduce) { .gb-pick { animation: none; } }
 .st-lvl { flex-wrap: wrap; row-gap: 10px; padding-block: 12px; border-radius: 24px; }
 .st-lvl .tx { flex: 1 1 100%; }
 .st-lvl .t-seg { flex: 1; }
