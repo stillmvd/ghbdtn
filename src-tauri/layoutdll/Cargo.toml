@@ -1,0 +1,16 @@
+[package]
+name = "ghbdtn-layout"
+version = "0.1.0"
+edition = "2021"
+description = "Смена раскладки изнутри потока окна"
+
+[lib]
+name = "ghbdtn_layout"
+crate-type = ["cdylib"]
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }

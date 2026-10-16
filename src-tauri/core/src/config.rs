@@ -103,6 +103,7 @@ pub enum Switch {
     #[default]
     Message,
     Hotkey,
+    Thread,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,17 +1,22 @@
 use super::output;
 use crate::config::{Program, Switch};
 use crate::keymap::Lang;
-use std::sync::atomic::{AtomicU8, Ordering::SeqCst};
+use std::os::windows::ffi::OsStrExt;
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering::SeqCst};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
-use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::core::{s, w, PCWSTR};
+use windows::Win32::Foundation::{CloseHandle, HMODULE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+use windows::Win32::System::SystemInformation::{IMAGE_FILE_MACHINE, IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_UNKNOWN};
+use windows::Win32::System::Threading::{IsWow64Process2, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyboardLayout, GetKeyboardLayoutList, HKL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_OEM_3,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, PostMessageW, GUITHREADINFO,
-    WM_INPUTLANGCHANGEREQUEST,
+    GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, PostMessageW, RegisterWindowMessageW,
+    SetWindowsHookExW, UnhookWindowsHookEx, GUITHREADINFO, HOOKPROC, WH_GETMESSAGE, WM_INPUTLANGCHANGEREQUEST,
 };
 
 fn langid(hkl: HKL) -> u16 {
@@ -38,8 +43,13 @@ pub fn focus_window() -> HWND {
     }
 }
 
+pub fn input_thread() -> (HWND, u32) {
+    let focus = focus_window();
+    (focus, unsafe { GetWindowThreadProcessId(focus, None) })
+}
+
 pub fn current() -> Option<Lang> {
-    current_of(foreground_thread().1)
+    current_of(input_thread().1)
 }
 
 fn current_of(thread: u32) -> Option<Lang> {
@@ -70,8 +80,8 @@ pub fn has_ru_en() -> bool {
 
 pub fn request(lang: Lang) -> Option<u32> {
     let hkl = hkl_for(lang)?;
-    let thread = foreground_thread().1;
-    unsafe { PostMessageW(Some(focus_window()), WM_INPUTLANGCHANGEREQUEST, WPARAM(0), LPARAM(hkl.0 as isize)) }.ok()?;
+    let (focus, thread) = input_thread();
+    unsafe { PostMessageW(Some(focus), WM_INPUTLANGCHANGEREQUEST, WPARAM(0), LPARAM(hkl.0 as isize)) }.ok()?;
     Some(thread)
 }
 
@@ -93,7 +103,7 @@ pub fn switch(lang: Lang) -> bool {
 }
 
 pub fn current_hkl() -> HKL {
-    unsafe { GetKeyboardLayout(foreground_thread().1) }
+    unsafe { GetKeyboardLayout(input_thread().1) }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,7 +161,7 @@ const HOTKEY_POLL: Duration = Duration::from_millis(3);
 const HOTKEY_LIMIT: Duration = Duration::from_millis(250);
 
 fn switch_hotkey(lang: Lang, toggle: Toggle) -> bool {
-    let thread = foreground_thread().1;
+    let thread = input_thread().1;
     for _ in 1..layouts().len().max(2) {
         if current_of(thread) == Some(lang) {
             return true;
@@ -163,11 +173,13 @@ fn switch_hotkey(lang: Lang, toggle: Toggle) -> bool {
             return false;
         }
         HOTKEY_MISSES.store(0, SeqCst);
+        HOTKEY_SWITCHES.fetch_add(1, SeqCst);
     }
     current_of(thread) == Some(lang)
 }
 
 static HOTKEY_MISSES: AtomicU8 = AtomicU8::new(0);
+pub static HOTKEY_SWITCHES: AtomicU64 = AtomicU64::new(0);
 const HOTKEY_DEAD_AFTER: u8 = 2;
 
 pub fn hotkey_dead() -> bool {
@@ -178,11 +190,97 @@ fn hotkey_for(program: &Program, toggle: impl FnOnce() -> Option<Toggle>, dead: 
     (program.switch == Switch::Hotkey && !dead).then(toggle).flatten()
 }
 
+const DLL_NAME: &str = "ghbdtn_layout.dll";
+const THREAD_LIMIT: Duration = Duration::from_millis(250);
+
+struct LayoutDll {
+    module: HMODULE,
+    hook: HOOKPROC,
+    message: u32,
+}
+
+unsafe impl Send for LayoutDll {}
+unsafe impl Sync for LayoutDll {}
+
+fn layout_dll() -> Option<&'static LayoutDll> {
+    static DLL: OnceLock<Option<LayoutDll>> = OnceLock::new();
+    DLL.get_or_init(|| {
+        let exe = std::env::current_exe().ok()?;
+        let dir = exe.parent()?;
+        let dir = if dir.ends_with("examples") { dir.parent()? } else { dir };
+        let path = Some(dir.join(DLL_NAME)).filter(|p| p.is_file())?;
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        unsafe {
+            let module = LoadLibraryW(PCWSTR(wide.as_ptr())).ok()?;
+            let hook = GetProcAddress(module, s!("layout_hook"))?;
+            Some(LayoutDll { module, hook: Some(std::mem::transmute::<unsafe extern "system" fn() -> isize, unsafe extern "system" fn(i32, WPARAM, LPARAM) -> LRESULT>(hook)), message: RegisterWindowMessageW(w!("GhbdtnActivateLayout")) })
+        }
+    })
+    .as_ref()
+}
+
+pub fn layout_dll_ready() -> bool {
+    layout_dll().is_some()
+}
+
+fn native_x64(hwnd: HWND) -> bool {
+    let mut pid = 0;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    let Ok(process) = (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }) else { return false };
+    let (mut machine, mut native) = (IMAGE_FILE_MACHINE::default(), IMAGE_FILE_MACHINE::default());
+    let ok = unsafe { IsWow64Process2(process, &mut machine, Some(&mut native)) }.is_ok();
+    let _ = unsafe { CloseHandle(process) };
+    ok && machine == IMAGE_FILE_MACHINE_UNKNOWN && native == IMAGE_FILE_MACHINE_AMD64 && cfg!(target_arch = "x86_64")
+}
+
+fn switch_thread(lang: Lang) -> bool {
+    let (Some(dll), Some(hkl)) = (layout_dll(), hkl_for(lang)) else { return false };
+    let (focus, thread) = input_thread();
+    if thread == 0 || !native_x64(focus) {
+        return false;
+    }
+    let Ok(hook) = (unsafe { SetWindowsHookExW(WH_GETMESSAGE, dll.hook, Some(dll.module.into()), thread) }) else { return false };
+    let posted = unsafe { PostMessageW(Some(focus), dll.message, WPARAM(0), LPARAM(hkl.0 as isize)) }.is_ok();
+    let ok = posted && poll(thread, |h| !is_ime(h) && langid(h) == lang.langid(), THREAD_LIMIT);
+    let _ = unsafe { UnhookWindowsHookEx(hook) };
+    if ok {
+        THREAD_SWITCHES.fetch_add(1, SeqCst);
+    }
+    ok
+}
+
+pub static THREAD_SWITCHES: AtomicU64 = AtomicU64::new(0);
+static THREAD_MISSES: Mutex<Vec<(String, u8)>> = Mutex::new(Vec::new());
+const THREAD_DEAD_AFTER: u8 = 2;
+
+fn thread_misses() -> std::sync::MutexGuard<'static, Vec<(String, u8)>> {
+    THREAD_MISSES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub fn thread_dead(exe: &str) -> bool {
+    thread_misses().iter().any(|(e, n)| e == exe && *n >= THREAD_DEAD_AFTER)
+}
+
+fn switch_thread_for(lang: Lang, exe: &str) -> bool {
+    if thread_dead(exe) {
+        return false;
+    }
+    let ok = switch_thread(lang);
+    let mut misses = thread_misses();
+    let n = misses.iter().find(|(e, _)| e == exe).map_or(0, |m| m.1);
+    misses.retain(|(e, _)| e != exe);
+    if !ok {
+        misses.push((exe.to_string(), n + 1));
+    }
+    ok
+}
+
 pub fn switch_with(lang: Lang, program: &Program) -> bool {
     if current() == Some(lang) {
         return true;
     }
-    let ok = hotkey_for(program, toggle, hotkey_dead()).is_some_and(|t| switch_hotkey(lang, t))
+    let ok = (program.switch == Switch::Thread && switch_thread_for(lang, &program.exe))
+        || hotkey_for(program, toggle, hotkey_dead()).is_some_and(|t| switch_hotkey(lang, t))
         || current() == Some(lang)
         || (0..program.retries.max(1)).any(|_| switch(lang));
     if ok && program.delay_ms > 0 {

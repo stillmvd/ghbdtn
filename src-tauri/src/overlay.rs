@@ -144,7 +144,7 @@ fn monitor((x, y): (i32, i32)) -> Option<RECT> {
 
 fn gui_caret() -> Option<RECT> {
     unsafe {
-        let (_, thread) = ghbdtn_core::win::lang::foreground_thread();
+        let (_, thread) = ghbdtn_core::win::lang::input_thread();
         let mut gi = GUITHREADINFO { cbSize: std::mem::size_of::<GUITHREADINFO>() as u32, ..Default::default() };
         GetGUIThreadInfo(thread, &mut gi).ok()?;
         if gi.hwndCaret.is_invalid() {

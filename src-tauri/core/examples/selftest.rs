@@ -311,22 +311,26 @@ fn main() {
 
     let sentinel = "ghbdtn-selftest-буфер";
     let _ = clipboard_win::set_clipboard_string(sentinel);
-    for (insert, switch) in [(Insert::Paste, Switch::Message), (Insert::Keys, Switch::Message), (Insert::Unicode, Switch::Hotkey)] {
+    for (insert, switch) in [(Insert::Paste, Switch::Message), (Insert::Keys, Switch::Message), (Insert::Unicode, Switch::Hotkey), (Insert::Unicode, Switch::Thread)] {
         let mut c = engine.config();
         c.programs.push(Program { exe: "notepad.exe".into(), insert, switch, ..Program::default() });
         engine.set_config(c);
         clear(np);
         lang::switch(Lang::En);
         std::thread::sleep(Duration::from_millis(200));
+        let thread_before = lang::THREAD_SWITCHES.load(SeqCst);
+        let hotkey_before = lang::HOTKEY_SWITCHES.load(SeqCst);
         type_text(np, "Ghbdtn vbh ", Lang::En);
         let got = text_of(np);
         let after = lang::current();
+        let by_thread = lang::THREAD_SWITCHES.load(SeqCst) - thread_before;
+        let by_hotkey = lang::HOTKEY_SWITCHES.load(SeqCst) - hotkey_before;
         std::thread::sleep(Duration::from_millis(600));
         let clip = clipboard_win::get_clipboard_string().unwrap_or_default();
         report(
             &mut failed,
-            got == "Привет мир " && after == Some(Lang::Ru) && clip == sentinel,
-            format!("профиль {insert:?}/{switch:?} (сочетание {:?}, не работает {}) → {got:?}, раскладка {after:?}, буфер восстановлен {}", lang::toggle(), lang::hotkey_dead(), clip == sentinel),
+            got == "Привет мир " && after == Some(Lang::Ru) && clip == sentinel && (switch == Switch::Thread) == (by_thread > 0) && (switch == Switch::Hotkey) == (by_hotkey > 0),
+            format!("профиль {insert:?}/{switch:?} (сочетание {:?}, не работает {}, изнутри потока {by_thread}, сочетанием {by_hotkey}) → {got:?}, раскладка {after:?}, буфер восстановлен {}", lang::toggle(), lang::hotkey_dead(), clip == sentinel),
         );
         let mut c = engine.config();
         c.programs.retain(|p| p.exe != "notepad.exe");

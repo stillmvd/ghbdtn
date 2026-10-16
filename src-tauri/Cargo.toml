@@ -1,6 +1,6 @@
 [workspace]
-members = ["core"]
-default-members = ["core", "."]
+members = ["core", "layoutdll"]
+default-members = ["core", "layoutdll", "."]
 resolver = "2"
 
 [package]

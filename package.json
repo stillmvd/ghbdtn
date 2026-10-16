@@ -4,11 +4,12 @@
   "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
+    "dev": "pnpm layoutdll && vite",
+    "build": "pnpm layoutdll && tsc && vite build",
+    "layoutdll": "cargo build --release --manifest-path src-tauri/Cargo.toml -p ghbdtn-layout",
     "tauri": "tauri",
     "live": "cargo run --release --manifest-path src-tauri/Cargo.toml -p ghbdtn-core --example live",
-    "check": "tsc --noEmit && cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --workspace",
+    "check": "tsc --noEmit && pnpm layoutdll && cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --workspace",
     "release": "ship release",
     "ship": "ship"
   },
