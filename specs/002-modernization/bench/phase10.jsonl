@@ -1,0 +1,43 @@
+{"cat":"layout_ru","got":"привет как дела ","mode":"paced","ms":[null,null,null],"ok":true,"target":"installed","want":"привет как дела "}
+{"cat":"layout_ru","got":"сегодня хорошая погода ","mode":"paced","ms":[null,null,null],"ok":true,"target":"installed","want":"сегодня хорошая погода "}
+{"cat":"layout_ru","got":"я думаю что это работает ","mode":"paced","ms":[null,94.0486,null,null,null],"ok":true,"target":"installed","want":"я думаю что это работает "}
+{"cat":"layout_ru","got":"напиши мне завтра утром ","mode":"paced","ms":[null,null,null,null],"ok":true,"target":"installed","want":"напиши мне завтра утром "}
+{"cat":"layout_ru","got":"можно посмотреть документы ","mode":"paced","ms":[null,null,null],"ok":true,"target":"installed","want":"можно посмотреть документы "}
+{"cat":"layout_ru","got":"где находится ближайшая аптека ","mode":"paced","ms":[115.66659999999999,null,null,null],"ok":true,"target":"installed","want":"где находится ближайшая аптека "}
+{"cat":"layout_ru","got":"отправь отчёт коллегам ","mode":"paced","ms":[20.2243,null,null],"ok":true,"target":"installed","want":"отправь отчёт коллегам "}
+{"cat":"layout_en","got":"hello world ","mode":"paced","ms":[null,null],"ok":true,"target":"installed","want":"hello world "}
+{"cat":"layout_en","got":"please check the build ","mode":"paced","ms":[null,null,null,null],"ok":true,"target":"installed","want":"please check the build "}
+{"cat":"layout_en","got":"open the settings window ","mode":"paced","ms":[null,null,null,null],"ok":true,"target":"installed","want":"open the settings window "}
+{"cat":"layout_en","got":"this is a simple test ","mode":"paced","ms":[40.7273,null,null,null,null],"ok":true,"target":"installed","want":"this is a simple test "}
+{"cat":"layout_en","got":"remote server returned error ","mode":"paced","ms":[52.6483,null,null,null],"ok":true,"target":"installed","want":"remote server returned error "}
+{"cat":"short","got":"мы ей позвоним ","mode":"paced","ms":[null,190.54299999999998,null],"ok":true,"target":"installed","want":"мы ей позвоним "}
+{"cat":"short","got":"он и я ","mode":"paced","ms":[null,293.5941,null],"ok":true,"target":"installed","want":"он и я "}
+{"cat":"short","got":"да нет ","mode":"paced","ms":[null,252.1214],"ok":true,"target":"installed","want":"да нет "}
+{"cat":"short","got":"ну ок ","mode":"paced","ms":[null,176.654],"ok":true,"target":"installed","want":"ну ок "}
+{"cat":"keep","got":"привет мир это обычный текст ","mode":"paced","ms":[null,null,null,null,null],"ok":true,"target":"installed","want":"привет мир это обычный текст "}
+{"cat":"keep","got":"the quick brown fox jumps ","mode":"paced","ms":[null,null,null,null,null],"ok":true,"target":"installed","want":"the quick brown fox jumps "}
+{"cat":"keep","got":"git npm api json url ","mode":"paced","ms":[null,null,null,null,null],"ok":true,"target":"installed","want":"git npm api json url "}
+{"cat":"keep","got":"ООО ИП НДС ","mode":"paced","ms":[null,null,null],"ok":true,"target":"installed","want":"ООО ИП НДС "}
+{"cat":"keep","got":"iPhone macOS JavaScript ","mode":"paced","ms":[null,null,null],"ok":true,"target":"installed","want":"iPhone macOS JavaScript "}
+{"cat":"keep","got":"ok yes no ","mode":"paced","ms":[null,null,null],"ok":true,"target":"installed","want":"ok yes no "}
+{"cat":"keep","got":"rust tauri react ","mode":"paced","ms":[null,null,null],"ok":true,"target":"installed","want":"rust tauri react "}
+{"cat":"typo","got":"проверяю почту ","mode":"paced","ms":[111.29390000000001,null],"ok":true,"target":"installed","want":"проверяю почту "}
+{"cat":"typo","got":"я увидел его ","mode":"paced","ms":[null,56.7771,null],"ok":true,"target":"installed","want":"я увидел его "}
+{"cat":"typo","got":"ввожа клавиатура ","mode":"paced","ms":[null,68.44550000000001],"ok":false,"target":"installed","want":"ввода клавиатура "}
+{"cat":"typo","got":"сегодня хорошо ","mode":"paced","ms":[77.95580000000001,null],"ok":true,"target":"installed","want":"сегодня хорошо "}
+{"cat":"typo","got":"the project ","mode":"paced","ms":[44.413399999999996,null],"ok":true,"target":"installed","want":"the project "}
+{"cat":"mixed","got":"запусти build и проверь ","mode":"paced","ms":[null,null,null,null],"ok":true,"target":"installed","want":"запусти build и проверь "}
+{"cat":"mixed","got":"открой github потом почту ","mode":"paced","ms":[null,113.9456,null,null],"ok":true,"target":"installed","want":"открой github потом почту "}
+{"cat":"layout_ru","got":"привет как дела ","mode":"burst","ok":true,"target":"installed","want":"привет как дела "}
+{"cat":"layout_ru","got":"сегодня хорошая погода ","mode":"burst","ok":true,"target":"installed","want":"сегодня хорошая погода "}
+{"cat":"layout_ru","got":"я думаю что это работает ","mode":"burst","ok":true,"target":"installed","want":"я думаю что это работает "}
+{"cat":"layout_ru","got":"напиши мне завтра утром ","mode":"burst","ok":true,"target":"installed","want":"напиши мне завтра утром "}
+{"cat":"layout_ru","got":"можно посмотреть документы ","mode":"burst","ok":true,"target":"installed","want":"можно посмотреть документы "}
+{"cat":"layout_ru","got":"где находится ближайшая аптека ","mode":"burst","ok":true,"target":"installed","want":"где находится ближайшая аптека "}
+{"cat":"layout_ru","got":"отправь отчёт коллегам ","mode":"burst","ok":true,"target":"installed","want":"отправь отчёт коллегам "}
+{"cat":"layout_en","got":"hello world ","mode":"burst","ok":true,"target":"installed","want":"hello world "}
+{"cat":"layout_en","got":"please check the build ","mode":"burst","ok":true,"target":"installed","want":"please check the build "}
+{"cat":"layout_en","got":"open the settings window ","mode":"burst","ok":true,"target":"installed","want":"open the settings window "}
+{"cat":"layout_en","got":"this is a simple test ","mode":"burst","ok":true,"target":"installed","want":"this is a simple test "}
+{"cat":"layout_en","got":"remote server returned error ","mode":"burst","ok":true,"target":"installed","want":"remote server returned error "}
+{"actions":15,"burst_ok":12,"burst_total":12,"dropped":0,"engine_fixes":0,"engine_ms_avg":0.0,"engine_ms_max":0.0,"engine_ms_without_send":0.0,"hold_left":0,"mode":"summary","ms_max":293.5941,"ms_p50":94.0486,"ms_p95":252.1214,"paced_ok":29,"paced_total":30,"replayed":0,"send_ms_per_event":0.0,"stages":{"decide":{"avg_ms":0.0,"max_ms":0.0,"n":0},"evaluate":{"avg_ms":0.0,"max_ms":0.0,"n":0},"queue":{"avg_ms":0.0,"max_ms":0.0,"n":0},"send":{"avg_ms":0.0,"max_ms":0.0,"n":0},"switch":{"avg_ms":0.0,"max_ms":0.0,"n":0}},"target":"installed"}

@@ -31,6 +31,7 @@ struct Shared {
     count: Mutex<(u32, u32)>,
     app: Mutex<Option<AppInfo>>,
     flyout_hidden: Mutex<Option<Instant>>,
+    flyout_at: Mutex<Option<tauri::Rect>>,
     hints: Sender<overlay::Hint>,
     journal: journal::Journal,
     ru: std::sync::atomic::AtomicBool,
@@ -271,7 +272,7 @@ async fn open_settings_cmd(app: AppHandle) {
 
 pub fn open_settings(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("flyout") {
-        let _ = w.hide();
+        let _ = w.destroy();
     }
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.unminimize();
@@ -297,15 +298,43 @@ fn work_area(x: i32, y: i32) -> Option<(i32, i32, i32, i32)> {
 }
 
 fn toggle_flyout(app: &AppHandle, rect: tauri::Rect) {
-    let Some(w) = app.get_webview_window("flyout") else { return };
-    if w.is_visible().unwrap_or(false) {
-        let _ = w.hide();
+    if let Some(w) = app.get_webview_window("flyout") {
+        let _ = w.destroy();
         return;
     }
-    let s = app.state::<S>();
+    let s = app.state::<S>().inner().clone();
     if s.flyout_hidden.lock().unwrap().is_some_and(|t| t.elapsed() < Duration::from_millis(350)) {
         return;
     }
+    *s.flyout_at.lock().unwrap() = Some(rect);
+    let Ok(w) = WebviewWindowBuilder::new(app, "flyout", WebviewUrl::App("index.html".into()))
+        .title("Ghbdtn")
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .resizable(false)
+        .skip_taskbar(true)
+        .always_on_top(true)
+        .visible(false)
+        .focused(false)
+        .inner_size(392.0, 420.0)
+        .build()
+    else {
+        return;
+    };
+    let fly = w.clone();
+    w.on_window_event(move |e| {
+        if let WindowEvent::Focused(false) = e {
+            *s.flyout_hidden.lock().unwrap() = Some(Instant::now());
+            let _ = fly.destroy();
+        }
+    });
+}
+
+#[tauri::command]
+fn flyout_ready(app: AppHandle, s: State<S>) {
+    let Some(w) = app.get_webview_window("flyout") else { return };
+    let Some(rect) = s.flyout_at.lock().unwrap().take() else { return };
     let scale = w.scale_factor().unwrap_or(1.0);
     let pos = rect.position.to_physical::<i32>(scale);
     let Ok(size) = w.outer_size() else { return };
@@ -314,7 +343,6 @@ fn toggle_flyout(app: &AppHandle, rect: tauri::Rect) {
     let x = (right + edge - size.width as i32).max(left);
     let y = if pos.y < top { top - edge } else { bottom + edge - size.height as i32 };
     let _ = w.set_position(PhysicalPosition { x, y });
-    let _ = app.emit_to("flyout", "flyout-open", ());
     let _ = w.show();
     let _ = w.set_focus();
 }
@@ -423,47 +451,27 @@ pub fn run() {
             set_autostart,
             list_processes,
             about,
-            open_settings_cmd
+            open_settings_cmd,
+            flyout_ready
         ])
         .setup(|app| {
             let handle = app.handle().clone();
             let (tx, rx) = crossbeam_channel::unbounded();
             let engine = Engine::start(Config::default_path(), tx);
             let _ = sys::set_autostart(engine.config().autostart);
-            overlay::create(&handle)?;
             let shared: S = Arc::new(Shared {
                 engine,
                 status: Mutex::new(Status::Working),
                 count: Mutex::new((today(), 0)),
                 app: Mutex::new(None),
                 flyout_hidden: Mutex::new(None),
-                hints: overlay::start(handle.clone()),
+                flyout_at: Mutex::new(None),
+                hints: overlay::start(),
                 journal: journal::Journal::new(),
                 ru: std::sync::atomic::AtomicBool::new(true),
                 words: Mutex::new(()),
             });
             app.manage(shared.clone());
-
-            let flyout = WebviewWindowBuilder::new(app, "flyout", WebviewUrl::App("index.html".into()))
-                .title("Ghbdtn")
-                .decorations(false)
-                .transparent(true)
-                .shadow(false)
-                .resizable(false)
-                .skip_taskbar(true)
-                .always_on_top(true)
-                .visible(false)
-                .focused(false)
-                .inner_size(392.0, 420.0)
-                .build()?;
-            let fly = flyout.clone();
-            let hidden = shared.clone();
-            flyout.on_window_event(move |e| {
-                if let WindowEvent::Focused(false) = e {
-                    let _ = fly.hide();
-                    *hidden.flyout_hidden.lock().unwrap() = Some(Instant::now());
-                }
-            });
 
             let tray = Tray::build(&handle, toggle_flyout)?;
             let _ = TRAY.set(tray);

@@ -29,9 +29,9 @@ export function Flyout() {
   const load = useCallback(() => { api.flyoutState().then(setS).catch(() => {}); }, []);
 
   useEffect(() => {
-    load();
-    const offs = ["flyout-open", "status", "config-changed"].map((e) => listen(e, load));
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") getCurrentWindow().hide(); };
+    api.flyoutState().then(setS).catch(() => getCurrentWindow().close());
+    const offs = ["status", "config-changed"].map((e) => listen(e, load));
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") getCurrentWindow().close(); };
     addEventListener("keydown", esc);
     return () => { offs.forEach((p) => p.then((f) => f())); removeEventListener("keydown", esc); };
   }, [load]);
@@ -39,8 +39,8 @@ export function Flyout() {
   useLayoutEffect(() => {
     const el = card.current;
     if (!el) return;
-    const fit = () => { getCurrentWindow().setSize(new LogicalSize(el.offsetWidth + 32, el.offsetHeight + 32)).catch(() => {}); };
-    fit();
+    const fit = () => getCurrentWindow().setSize(new LogicalSize(el.offsetWidth + 32, el.offsetHeight + 32)).catch(() => {});
+    fit().then(api.flyoutReady);
     const ro = new ResizeObserver(fit);
     ro.observe(el);
     return () => ro.disconnect();

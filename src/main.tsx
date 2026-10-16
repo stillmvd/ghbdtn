@@ -4,7 +4,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import "@stillmvd/tauri-ship/ship.css";
 import "./app.css";
 import { Flyout } from "./flyout/Flyout";
-import { Overlay } from "./overlay/Overlay";
 import { Settings } from "./settings/Settings";
 
 const NAV = new Set(["Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"]);
@@ -14,7 +13,7 @@ addEventListener("pointerdown", () => root.removeAttribute("data-keys"), true);
 
 const label = getCurrentWindow().label;
 root.dataset.window = label;
-const View = label === "flyout" ? Flyout : label === "overlay" ? Overlay : Settings;
+const View = label === "flyout" ? Flyout : Settings;
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

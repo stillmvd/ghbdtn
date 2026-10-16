@@ -48,6 +48,7 @@ export const api = {
   listProcesses: () => invoke<Proc[]>("list_processes"),
   about: () => invoke<About>("about"),
   openSettings: () => invoke<void>("open_settings_cmd"),
+  flyoutReady: () => invoke<void>("flyout_ready"),
 };
 
 export const errorsOf = (e: unknown): ConfigError[] =>
