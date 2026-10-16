@@ -29,9 +29,34 @@ fn clear(np: HWND) {
     tap_vk(np, &[VK_DELETE]);
 }
 
+static EVENTS: std::sync::OnceLock<crossbeam_channel::Receiver<CoreEvent>> = std::sync::OnceLock::new();
+
+fn trace() -> Vec<String> {
+    EVENTS
+        .get()
+        .map(|rx| {
+            rx.try_iter()
+                .filter_map(|ev| match ev {
+                    CoreEvent::Acted { kind, rule, typed, result } => Some(format!("acted {kind:?} {rule:?} {typed:?} → {result:?}")),
+                    CoreEvent::Undone => Some("undone".into()),
+                    CoreEvent::NeverAdded(w) => Some(format!("never {w:?}")),
+                    CoreEvent::HookReinstalled => Some("reinstall".into()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn report(failed: &mut i32, ok: bool, line: String) {
     *failed += !ok as i32;
+    let events = trace();
     println!("{} {line}", if ok { "OK  " } else { "FAIL" });
+    if !ok {
+        for e in events {
+            println!("       · {e}");
+        }
+    }
 }
 
 fn guard(target: HWND) {
@@ -110,6 +135,7 @@ fn main() {
     hook::ACCEPT_INJECTED.store(true, SeqCst);
     let (tx, rx) = crossbeam_channel::unbounded();
     let engine = Engine::start(cfg_path, tx);
+    let _ = EVENTS.set(rx);
     std::process::Command::new("notepad.exe").arg(&doc).spawn().unwrap();
     let np = find_notepad(file);
     std::thread::sleep(Duration::from_millis(500));
@@ -138,9 +164,7 @@ fn main() {
         std::thread::sleep(Duration::from_millis(200));
         type_text(np, input_text, *l);
         let got = text_of(np);
-        let ok = got == *want;
-        failed += !ok as i32;
-        println!("{} {:?} → {:?} (ждали {:?})", if ok { "OK  " } else { "FAIL" }, input_text, got, want);
+        report(&mut failed, got == *want, format!("{input_text:?} → {got:?} (ждали {want:?})"));
     }
 
     tap_vk(np, &[VK_CONTROL, VK_A]);
@@ -164,11 +188,15 @@ fn main() {
     let undone = (text_of(np), lang::current());
     type_text(np, "tn ", Lang::En);
     let got = text_of(np);
+    let never = engine.config().is_never("ghbdtn");
     report(
         &mut failed,
-        early == "прив" && undone == ("ghbd".to_string(), Some(Lang::En)) && got == "ghbdtn ",
-        format!("ранняя правка {early:?}, отмена посреди слова {undone:?}, дальше {got:?}"),
+        early == "прив" && undone == ("ghbd".to_string(), Some(Lang::En)) && got == "ghbdtn " && never,
+        format!("ранняя правка {early:?}, отмена посреди слова {undone:?}, дальше {got:?}, вторая отмена → не трогать {never}"),
     );
+    let mut c = engine.config();
+    c.never.clear();
+    engine.set_config(c);
 
     tap_vk(np, &[VK_CONTROL, VK_A]);
     tap_vk(np, &[VK_DELETE]);
@@ -267,11 +295,6 @@ fn main() {
     std::thread::sleep(Duration::from_millis(300));
     report(&mut failed, dropped == 0 && hook::REINSTALLS.load(SeqCst) == 0 && hook::hold_state() == 0, format!("всего: потеряно {dropped}, переустановок {}, задержка {}", hook::REINSTALLS.load(SeqCst), hook::hold_state()));
 
-    while let Ok(ev) = rx.try_recv() {
-        if let CoreEvent::Status(s) = ev {
-            println!("status {s:?}");
-        }
-    }
     tap_vk(np, &[VK_CONTROL, VK_A]);
     tap_vk(np, &[VK_DELETE]);
     tap_vk(np, &[VK_CONTROL, VK_S]);
