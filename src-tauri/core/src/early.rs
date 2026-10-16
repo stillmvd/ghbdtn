@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{Config, Sensitivity};
 use crate::decide::{Fix, Rule, WordInput};
 use crate::dict::Dictionaries;
 use crate::keymap::Lang;
@@ -12,10 +12,20 @@ pub const EARLY_MAX: usize = 6;
 pub const EARLY_SHARE: f64 = 2e-5;
 pub const EARLY_RATIO: f64 = 10.0;
 
+fn factor(level: Sensitivity) -> f64 {
+    match level {
+        Sensitivity::Careful => 3.0,
+        Sensitivity::Normal => 1.0,
+        Sensitivity::Bold => 1.0 / 3.0,
+    }
+}
+
 pub fn early_fix(input: &WordInput, dicts: &Dictionaries, cfg: &Config) -> Option<Fix> {
-    if input.code_mode || !cfg.features.layout || !cfg.features.early || !(EARLY_MIN..=EARLY_MAX).contains(&input.keys.len()) {
+    let min = EARLY_MIN + (cfg.sensitivity == Sensitivity::Careful) as usize;
+    if input.code_mode || !cfg.features.layout || !cfg.features.early || !(min..=EARLY_MAX).contains(&input.keys.len()) {
         return None;
     }
+    let k = factor(cfg.sensitivity);
     let (from, to) = (input.lang, input.lang.other());
     let typed = render(input.keys, from);
     let text = render(input.keys, to);
@@ -26,7 +36,7 @@ pub fn early_fix(input: &WordInput, dicts: &Dictionaries, cfg: &Config) -> Optio
         return None;
     }
     let share = dicts.start_share(to, &text);
-    if share < EARLY_SHARE || share < EARLY_RATIO * typo_share(&typed, from, dicts) {
+    if share < EARLY_SHARE * k || share < EARLY_RATIO * k * typo_share(&typed, from, dicts) {
         return None;
     }
     Some(Fix { kind: ActionKind::Layout, rule: Rule::Early, typed, text, to: Some(to) })

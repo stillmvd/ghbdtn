@@ -119,6 +119,10 @@ impl Batch {
         tap(&mut self.out, VK_RETURN);
     }
 
+    pub fn toggle_caps(&mut self) {
+        tap(&mut self.out, VK_CAPITAL);
+    }
+
     pub fn chord(&mut self, modifier: VIRTUAL_KEY, vk: VIRTUAL_KEY) {
         let mut out = vec![key(modifier, 0, KEYBD_EVENT_FLAGS(0))];
         tap(&mut out, vk);

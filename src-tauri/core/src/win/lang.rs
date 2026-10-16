@@ -1,6 +1,6 @@
 use super::output;
 use crate::config::{Program, Switch};
-use crate::keymap::Lang;
+use crate::keymap::{self, Lang, Table, SCAN_LIMIT};
 use std::os::windows::ffi::OsStrExt;
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering::SeqCst};
 use std::sync::{Mutex, OnceLock};
@@ -12,7 +12,8 @@ use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_R
 use windows::Win32::System::SystemInformation::{IMAGE_FILE_MACHINE, IMAGE_FILE_MACHINE_AMD64, IMAGE_FILE_MACHINE_UNKNOWN};
 use windows::Win32::System::Threading::{IsWow64Process2, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetKeyboardLayout, GetKeyboardLayoutList, HKL, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_OEM_3,
+    GetKeyboardLayout, GetKeyboardLayoutList, MapVirtualKeyExW, ToUnicodeEx, HKL, MAPVK_VSC_TO_VK, VK_LCONTROL, VK_LMENU, VK_LSHIFT,
+    VK_OEM_3, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, PostMessageW, RegisterWindowMessageW,
@@ -101,6 +102,30 @@ pub fn wait(lang: Lang, thread: u32) -> bool {
 pub fn switch(lang: Lang) -> bool {
     request(lang).is_some_and(|thread| wait(lang, thread))
 }
+
+pub fn system_table(lang: Lang) -> Option<Table> {
+    let hkl = hkl_for(lang)?;
+    let mut table: Table = [[None; 2]; SCAN_LIMIT];
+    for scan in keymap::scans() {
+        let vk = unsafe { MapVirtualKeyExW(scan as u32, MAPVK_VSC_TO_VK, Some(hkl)) };
+        if vk == 0 {
+            continue;
+        }
+        for shift in [false, true] {
+            let mut state = [0u8; 256];
+            if shift {
+                state[VK_SHIFT.0 as usize] = 0x80;
+            }
+            let mut buf = [0u16; 4];
+            if unsafe { ToUnicodeEx(vk, scan as u32, &state, &mut buf, NO_STATE_CHANGE, Some(hkl)) } == 1 {
+                table[scan as usize][shift as usize] = char::from_u32(buf[0] as u32).filter(|c| !c.is_control());
+            }
+        }
+    }
+    Some(table)
+}
+
+const NO_STATE_CHANGE: u32 = 4;
 
 pub fn current_hkl() -> HKL {
     unsafe { GetKeyboardLayout(input_thread().1) }
@@ -300,6 +325,20 @@ mod tests {
         assert_eq!(toggle_from("4"), Some(Toggle::Grave));
         assert_eq!(toggle_from("3"), None);
         assert_eq!(toggle_from(""), None);
+    }
+
+    #[test]
+    fn standard_layouts_match_builtin_map() {
+        if !has_ru_en() {
+            return;
+        }
+        for lang in [Lang::Ru, Lang::En] {
+            let system = system_table(lang).expect("table");
+            assert!(keymap::accept_table(lang, &system), "{lang:?}");
+            let builtin = keymap::builtin_table(lang);
+            let diff: Vec<_> = keymap::scans().filter(|&s| system[s as usize] != builtin[s as usize]).map(|s| (s, system[s as usize], builtin[s as usize])).collect();
+            assert!(diff.is_empty(), "{lang:?} {diff:?}");
+        }
     }
 
     #[test]

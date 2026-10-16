@@ -7,6 +7,7 @@ pub mod output;
 use crate::config::{Config, Mode, NeverSource, Program};
 use crate::decide::{decide, Fix, Rule, WordInput};
 use crate::early::early_fix;
+use crate::gesture::DoubleShift;
 use crate::dict::Dictionaries;
 use crate::keymap::{char_of, convert_text, script_of, Lang};
 use crate::layout::{short_alongside, split_tail};
@@ -70,6 +71,7 @@ type Fresh = Arc<Mutex<Option<Dictionaries>>>;
 
 impl Engine {
     pub fn start(path: PathBuf, events: Sender<CoreEvent>) -> Engine {
+        crate::keymap::set_system(lang::system_table(Lang::Ru), lang::system_table(Lang::En));
         let cfg = Config::load(&path).unwrap_or_default();
         let config = Arc::new(ArcSwap::from_pointee(cfg));
         let (tx, rx) = bounded(4096);
@@ -159,6 +161,7 @@ struct Worker {
     program: Program,
     early: Option<Early>,
     early_pending: Option<(Fix, Instant, bool)>,
+    shift_taps: DoubleShift,
     status: Option<Status>,
     last_key: Instant,
     last_watch: Instant,
@@ -217,6 +220,7 @@ impl Worker {
             program: Program::default(),
             early: None,
             early_pending: None,
+            shift_taps: DoubleShift::default(),
             status: None,
             last_key: Instant::now(),
             last_watch: Instant::now(),
@@ -365,6 +369,9 @@ impl Worker {
                         hook::REPLAYED.fetch_add(1, SeqCst);
                         self.batch.replay(&k);
                     }
+                    if !k.eaten {
+                        self.gesture(&k);
+                    }
                     if !k.up {
                         self.key(k);
                     }
@@ -459,7 +466,7 @@ impl Worker {
                 self.reset();
                 self.evaluate();
             } else if vk == VK_BACK {
-                self.undo(&k);
+                self.undo(!k.shift && !k.alt);
             } else if vk == VK_RETURN {
                 self.finish(Separator::Enter, true, k.at);
             } else {
@@ -638,6 +645,11 @@ impl Worker {
                     hook::set_lang(Some(to));
                 }
                 self.batch.rewrite(&(typed_all.clone() + &sep_typed), &(result_all.clone() + &sep_out));
+                if fix.rule == Rule::CapsLock && self.caps {
+                    self.batch.toggle_caps();
+                    self.caps = false;
+                    self.batch.caps = false;
+                }
                 self.fix_started = Some(started);
                 if sep == Separator::Enter {
                     self.batch.enter();
@@ -713,13 +725,23 @@ impl Worker {
         }
     }
 
-    fn undo(&mut self, k: &RawKey) {
+    fn gesture(&mut self, k: &RawKey) {
+        if matches!(VIRTUAL_KEY(k.vk), VK_SHIFT | VK_LSHIFT | VK_RSHIFT) {
+            if self.shift_taps.shift(!k.up, k.at) && self.cfg().features.double_shift && self.book.armed() {
+                self.undo(false);
+            }
+        } else if !k.up {
+            self.shift_taps.other();
+        }
+    }
+
+    fn undo(&mut self, passthrough: bool) {
         self.tail = None;
         self.edit = None;
         self.ctx = None;
         ARMED_UNDO.store(false, SeqCst);
         let Some(action) = self.book.take() else {
-            if !k.shift && !k.alt {
+            if passthrough {
                 self.batch.chord(VK_CONTROL, VK_BACK);
             }
             return;

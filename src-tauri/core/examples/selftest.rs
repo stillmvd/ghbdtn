@@ -309,6 +309,57 @@ fn main() {
     c.features.early = true;
     engine.set_config(c);
 
+    let caps_on = || unsafe { GetKeyState(VK_CAPITAL.0 as i32) } & 1 != 0;
+    clear(np);
+    lang::switch(Lang::En);
+    std::thread::sleep(Duration::from_millis(200));
+    if !caps_on() {
+        tap_vk(np, &[VK_CAPITAL]);
+    }
+    type_text(np, "Hello ", Lang::En);
+    let got = text_of(np);
+    let left_on = caps_on();
+    if left_on {
+        tap_vk(np, &[VK_CAPITAL]);
+    }
+    report(&mut failed, got == "Hello " && !left_on, format!("Caps Lock «hELLO» → {got:?}, Caps выключен {}", !left_on));
+
+    clear(np);
+    lang::switch(Lang::Ru);
+    std::thread::sleep(Duration::from_millis(200));
+    type_text(np, "ПРивет ", Lang::Ru);
+    let got = text_of(np);
+    report(&mut failed, got == "Привет ", format!("две заглавные → {got:?}"));
+
+    let mut c = engine.config();
+    c.features.yo = true;
+    c.features.double_shift = true;
+    engine.set_config(c);
+    clear(np);
+    lang::switch(Lang::Ru);
+    std::thread::sleep(Duration::from_millis(200));
+    type_text(np, "еще ", Lang::Ru);
+    let got = text_of(np);
+    report(&mut failed, got == "ещё ", format!("ёфикатор → {got:?}"));
+
+    clear(np);
+    lang::switch(Lang::En);
+    std::thread::sleep(Duration::from_millis(200));
+    type_text(np, "vfvf ", Lang::En);
+    let fixed = text_of(np);
+    guard(np);
+    for _ in 0..2 {
+        send(&[input(VK_LSHIFT.0, 0, false), input(VK_LSHIFT.0, 0, true)]);
+        std::thread::sleep(Duration::from_millis(60));
+    }
+    std::thread::sleep(Duration::from_millis(700));
+    let got = text_of(np);
+    report(&mut failed, fixed == "мама " && got == "vfvf ", format!("двойной Shift: {fixed:?} → {got:?}"));
+    let mut c = engine.config();
+    c.features.yo = false;
+    c.features.double_shift = false;
+    engine.set_config(c);
+
     let sentinel = "ghbdtn-selftest-буфер";
     let _ = clipboard_win::set_clipboard_string(sentinel);
     for (insert, switch) in [(Insert::Paste, Switch::Message), (Insert::Keys, Switch::Message), (Insert::Unicode, Switch::Hotkey), (Insert::Unicode, Switch::Thread)] {

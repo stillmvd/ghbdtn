@@ -1,4 +1,4 @@
-use ghbdtn_core::config::Config;
+use ghbdtn_core::config::{Config, Sensitivity};
 use ghbdtn_core::decide::{decide, Rule, WordInput};
 use ghbdtn_core::dict::Dictionaries;
 use ghbdtn_core::early::early_fix;
@@ -257,6 +257,48 @@ fn early_starts() {
         println!("{lang:?} early right {:.1}% of {} by length {by_n:?} wrong {:?}", early as f64 * 100.0 / long.len() as f64, long.len(), wrong.iter().take(15).collect::<Vec<_>>());
         assert!(wrong.is_empty(), "early wrong {lang:?}");
     }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct Level {
+    false_top: usize,
+    typo_right: usize,
+    typo_wrong: usize,
+    early_right: usize,
+    early_false: usize,
+}
+
+fn measure(level: Sensitivity, dicts: &Dictionaries) -> Level {
+    let mut cfg = config();
+    cfg.sensitivity = level;
+    let mut m = Level::default();
+    for lang in [Lang::Ru, Lang::En] {
+        let words: Vec<String> = top_words(lang).into_iter().take(3000).collect();
+        m.false_top += words.iter().filter(|w| run(w, lang, lang, false, dicts, &cfg).is_some()).count();
+        m.early_false += words.iter().filter(|w| early_at(w, lang, lang, dicts, &cfg).is_some()).count();
+        m.early_right += words.iter().filter(|w| w.chars().count() >= 4 && early_at(w, lang, lang.other(), dicts, &cfg).is_some_and(|(n, _)| n < w.chars().count())).count();
+        for w in words.iter().filter(|w| w.chars().count() >= 5 && w.chars().all(|c| lang.owns_letter(c))) {
+            for v in typo_variants(w, lang).into_iter().filter(|v| !dicts.seen(lang, v)) {
+                match run(&v, lang, lang, false, dicts, &cfg) {
+                    Some((ActionKind::Typo, t)) if &t == w => m.typo_right += 1,
+                    Some(_) => m.typo_wrong += 1,
+                    None => {}
+                }
+            }
+        }
+    }
+    m
+}
+
+#[test]
+fn sensitivity_levels() {
+    let dicts = Dictionaries::load();
+    let [careful, normal, bold] = [Sensitivity::Careful, Sensitivity::Normal, Sensitivity::Bold].map(|l| measure(l, &dicts));
+    println!("careful {careful:?}\nnormal  {normal:?}\nbold    {bold:?}");
+    assert!(careful.typo_wrong <= normal.typo_wrong && careful.false_top <= normal.false_top);
+    assert!(careful.early_right <= normal.early_right && normal.early_right <= bold.early_right);
+    assert_eq!(careful.early_false + normal.early_false, 0);
+    assert!(bold.early_false <= 6, "bold early false {}", bold.early_false);
 }
 
 #[test]

@@ -1,4 +1,6 @@
-use crate::config::Config;
+use crate::case::{caps_lock, double_caps};
+use crate::yo::yo_fix;
+use crate::config::{Config, Sensitivity};
 use crate::dict::Dictionaries;
 use crate::keymap::Lang;
 use crate::layout::{acronym, layout_after, other_layout_word, short_pair, split_tail};
@@ -32,10 +34,13 @@ pub enum Rule {
     FarFix,
     Early,
     Misspelled,
+    CapsLock,
+    DoubleCaps,
+    Yo,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 15] = [
+    pub const ALL: [Rule; 18] = [
         Rule::Replace,
         Rule::Layout,
         Rule::LayoutAfterShort,
@@ -51,6 +56,9 @@ impl Rule {
         Rule::FarFix,
         Rule::Early,
         Rule::Misspelled,
+        Rule::CapsLock,
+        Rule::DoubleCaps,
+        Rule::Yo,
     ];
 
     pub fn name(self) -> &'static str {
@@ -70,6 +78,9 @@ impl Rule {
             Rule::FarFix => "far_fix",
             Rule::Early => "early",
             Rule::Misspelled => "misspelled",
+            Rule::CapsLock => "caps_lock",
+            Rule::DoubleCaps => "double_caps",
+            Rule::Yo => "yo",
         }
     }
 }
@@ -83,7 +94,17 @@ pub struct Fix {
     pub to: Option<Lang>,
 }
 
+const RISKY: [Rule; 5] = [Rule::Context, Rule::Joint, Rule::Lone, Rule::ShortFix, Rule::SplitFix];
+
+pub fn allowed(rule: Rule, level: Sensitivity) -> bool {
+    level != Sensitivity::Careful || !RISKY.contains(&rule)
+}
+
 pub fn decide(input: &WordInput, dicts: &Dictionaries, cfg: &Config) -> Option<Fix> {
+    decide_any(input, dicts, cfg).filter(|f| allowed(f.rule, cfg.sensitivity))
+}
+
+fn decide_any(input: &WordInput, dicts: &Dictionaries, cfg: &Config) -> Option<Fix> {
     let typed = render(input.keys, input.lang);
     let (core, tail) = split_tail(&typed, input.lang);
     if core.is_empty() || cfg.is_never(core) {
@@ -93,6 +114,19 @@ pub fn decide(input: &WordInput, dicts: &Dictionaries, cfg: &Config) -> Option<F
     if cfg.features.replace {
         if let Some(r) = cfg.replacement(core) {
             return fix(ActionKind::Replace, Rule::Replace, apply_case(core, r) + tail, None);
+        }
+    }
+    if cfg.features.yo {
+        if let Some(text) = yo_fix(core, input.lang) {
+            return fix(ActionKind::Replace, Rule::Yo, text + tail, None);
+        }
+    }
+    if cfg.features.caps && !input.code_mode {
+        if let Some(text) = caps_lock(input.keys, core, input.lang, dicts) {
+            return fix(ActionKind::Typo, Rule::CapsLock, text + tail, None);
+        }
+        if let Some(text) = double_caps(core, input.lang, dicts) {
+            return fix(ActionKind::Typo, Rule::DoubleCaps, text + tail, None);
         }
     }
     let layout_on = cfg.features.layout && !(input.code_mode && is_code_token(core, true));

@@ -9,12 +9,24 @@ pub struct Features {
     pub typos: bool,
     pub replace: bool,
     pub early: bool,
+    pub caps: bool,
+    pub yo: bool,
+    pub double_shift: bool,
 }
 
 impl Default for Features {
     fn default() -> Self {
-        Features { layout: true, typos: true, replace: true, early: true }
+        Features { layout: true, typos: true, replace: true, early: true, caps: true, yo: false, double_shift: false }
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Sensitivity {
+    Careful,
+    #[default]
+    Normal,
+    Bold,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -164,6 +176,7 @@ pub struct Config {
     pub replacements: BTreeMap<String, String>,
     pub never: Vec<NeverWord>,
     pub processes: Processes,
+    pub sensitivity: Sensitivity,
     pub programs: Vec<Program>,
 }
 
@@ -180,6 +193,7 @@ impl Default for Config {
             replacements: BTreeMap::from([("чето".to_string(), "чё-то".to_string())]),
             never: Vec::new(),
             processes: Processes::default(),
+            sensitivity: Sensitivity::Normal,
             programs: default_programs(),
         }
     }

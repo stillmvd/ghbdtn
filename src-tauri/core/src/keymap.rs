@@ -49,7 +49,55 @@ const ROWS: [(u16, &str, &str, &str, &str); 5] = [
     (0x39, " ", " ", " ", " "),
 ];
 
+pub const SCAN_LIMIT: usize = 0x3A;
+pub type Table = [[Option<char>; 2]; SCAN_LIMIT];
+
+static SYSTEM: std::sync::OnceLock<[Option<Table>; 2]> = std::sync::OnceLock::new();
+
+fn slot(lang: Lang) -> usize {
+    match lang {
+        Lang::Ru => 0,
+        Lang::En => 1,
+    }
+}
+
+pub fn scans() -> impl Iterator<Item = u16> {
+    ROWS.iter().flat_map(|&(start, en, _, _, _)| start..start + en.chars().count() as u16)
+}
+
+pub fn accept_table(lang: Lang, table: &Table) -> bool {
+    let letters: std::collections::HashSet<char> = table.iter().flatten().flatten().flat_map(|c| c.to_lowercase()).collect();
+    lang.alphabet().chars().all(|c| letters.contains(&c)) && table[0x39][0] == Some(' ')
+}
+
+pub fn set_system(ru: Option<Table>, en: Option<Table>) -> bool {
+    let pick = |lang, t: Option<Table>| t.filter(|t| accept_table(lang, t) && *t != builtin_table(lang));
+    SYSTEM.set([pick(Lang::Ru, ru), pick(Lang::En, en)]).is_ok()
+}
+
+pub fn system_active(lang: Lang) -> bool {
+    SYSTEM.get().is_some_and(|s| s[slot(lang)].is_some())
+}
+
+pub fn builtin_table(lang: Lang) -> Table {
+    let mut t: Table = [[None; 2]; SCAN_LIMIT];
+    for scan in scans() {
+        for shift in [false, true] {
+            t[scan as usize][shift as usize] = builtin(scan, shift, lang);
+        }
+    }
+    t
+}
+
 fn lookup(scan: u16, shift: bool, lang: Lang) -> Option<char> {
+    system_cell(scan, shift, lang).or_else(|| builtin(scan, shift, lang))
+}
+
+fn system_cell(scan: u16, shift: bool, lang: Lang) -> Option<char> {
+    SYSTEM.get().and_then(|s| s[slot(lang)].as_ref()).and_then(|t| t.get(scan as usize)).and_then(|r| r[shift as usize])
+}
+
+fn builtin(scan: u16, shift: bool, lang: Lang) -> Option<char> {
     ROWS.iter().find_map(|&(start, en, en_s, ru, ru_s)| {
         let row = match (lang, shift) {
             (Lang::En, false) => en,
@@ -69,6 +117,14 @@ pub fn char_of(scan: u16, shift: bool, caps: bool, lang: Lang) -> Option<char> {
 }
 
 pub fn key_of(c: char, lang: Lang) -> Option<(u16, bool)> {
+    if system_active(lang) {
+        let found = [false, true].into_iter().find_map(|shift| scans().find(|&s| system_cell(s, shift, lang) == Some(c)).map(|s| (s, shift)));
+        return found.or_else(|| builtin_key(c, lang).filter(|&(s, shift)| system_cell(s, shift, lang).is_none()));
+    }
+    builtin_key(c, lang)
+}
+
+fn builtin_key(c: char, lang: Lang) -> Option<(u16, bool)> {
     ROWS.iter().find_map(|&(start, en, en_s, ru, ru_s)| {
         let (plain, shifted) = match lang {
             Lang::En => (en, en_s),

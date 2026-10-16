@@ -137,6 +137,14 @@ pub fn acronym(keys: &[Key], lang: Lang, dicts: &Dictionaries) -> Option<String>
         .then(|| alt + &render(tail, lang))
 }
 
+pub fn is_acronym(word: &str, lang: Lang) -> bool {
+    let list = match lang {
+        Lang::Ru => ACRO_RU,
+        Lang::En => ACRO_EN,
+    };
+    list.contains(&word.to_uppercase().as_str())
+}
+
 pub(crate) fn short_word(word: &str, lang: Lang) -> bool {
     let list = match lang {
         Lang::Ru => SHORT_RU,

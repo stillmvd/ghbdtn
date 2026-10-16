@@ -1,0 +1,43 @@
+{"cat":"layout_ru","got":"привет как дела ","mode":"paced","ms":[null,null,null],"ok":true,"target":"ghbdtn","want":"привет как дела "}
+{"cat":"layout_ru","got":"сегодня хорошая погода ","mode":"paced","ms":[null,null,null],"ok":true,"target":"ghbdtn","want":"сегодня хорошая погода "}
+{"cat":"layout_ru","got":"я думаю что это работает ","mode":"paced","ms":[null,null,null,null,null],"ok":true,"target":"ghbdtn","want":"я думаю что это работает "}
+{"cat":"layout_ru","got":"напиши мне завтра утром ","mode":"paced","ms":[null,null,null,null],"ok":true,"target":"ghbdtn","want":"напиши мне завтра утром "}
+{"cat":"layout_ru","got":"можно посмотреть документы ","mode":"paced","ms":[null,null,null],"ok":true,"target":"ghbdtn","want":"можно посмотреть документы "}
+{"cat":"layout_ru","got":"где находится ближайшая аптека ","mode":"paced","ms":[49.4996,null,null,null],"ok":true,"target":"ghbdtn","want":"где находится ближайшая аптека "}
+{"cat":"layout_ru","got":"отправь отчёт коллегам ","mode":"paced","ms":[null,null,null],"ok":true,"target":"ghbdtn","want":"отправь отчёт коллегам "}
+{"cat":"layout_en","got":"hello world ","mode":"paced","ms":[null,null],"ok":true,"target":"ghbdtn","want":"hello world "}
+{"cat":"layout_en","got":"please check the build ","mode":"paced","ms":[null,null,null,null],"ok":true,"target":"ghbdtn","want":"please check the build "}
+{"cat":"layout_en","got":"open the settings window ","mode":"paced","ms":[null,null,null,null],"ok":true,"target":"ghbdtn","want":"open the settings window "}
+{"cat":"layout_en","got":"this is a simple test ","mode":"paced","ms":[28.1145,null,null,null,null],"ok":true,"target":"ghbdtn","want":"this is a simple test "}
+{"cat":"layout_en","got":"remote server returned error ","mode":"paced","ms":[null,null,null,null],"ok":true,"target":"ghbdtn","want":"remote server returned error "}
+{"cat":"short","got":"мы ей позвоним ","mode":"paced","ms":[null,67.1695,null],"ok":true,"target":"ghbdtn","want":"мы ей позвоним "}
+{"cat":"short","got":"он и я ","mode":"paced","ms":[null,61.3616,null],"ok":true,"target":"ghbdtn","want":"он и я "}
+{"cat":"short","got":"да нет ","mode":"paced","ms":[null,32.250099999999996],"ok":true,"target":"ghbdtn","want":"да нет "}
+{"cat":"short","got":"ну ок ","mode":"paced","ms":[null,71.075],"ok":true,"target":"ghbdtn","want":"ну ок "}
+{"cat":"keep","got":"привет мир это обычный текст ","mode":"paced","ms":[null,null,null,null,null],"ok":true,"target":"ghbdtn","want":"привет мир это обычный текст "}
+{"cat":"keep","got":"the quick brown fox jumps ","mode":"paced","ms":[null,null,null,null,null],"ok":true,"target":"ghbdtn","want":"the quick brown fox jumps "}
+{"cat":"keep","got":"git npm api json url ","mode":"paced","ms":[null,null,null,null,null],"ok":true,"target":"ghbdtn","want":"git npm api json url "}
+{"cat":"keep","got":"ООО ИП НДС ","mode":"paced","ms":[null,null,null],"ok":true,"target":"ghbdtn","want":"ООО ИП НДС "}
+{"cat":"keep","got":"iPhone macOS JavaScript ","mode":"paced","ms":[null,null,null],"ok":true,"target":"ghbdtn","want":"iPhone macOS JavaScript "}
+{"cat":"keep","got":"ok yes no ","mode":"paced","ms":[null,null,null],"ok":true,"target":"ghbdtn","want":"ok yes no "}
+{"cat":"keep","got":"rust tauri react ","mode":"paced","ms":[null,null,null],"ok":true,"target":"ghbdtn","want":"rust tauri react "}
+{"cat":"typo","got":"проверяю почту ","mode":"paced","ms":[109.6061,null],"ok":true,"target":"ghbdtn","want":"проверяю почту "}
+{"cat":"typo","got":"я увидел его ","mode":"paced","ms":[null,86.91319999999999,null],"ok":true,"target":"ghbdtn","want":"я увидел его "}
+{"cat":"typo","got":"ввода клавиатура ","mode":"paced","ms":[47.8192,47.618],"ok":true,"target":"ghbdtn","want":"ввода клавиатура "}
+{"cat":"typo","got":"сегодня хорошо ","mode":"paced","ms":[84.5607,null],"ok":true,"target":"ghbdtn","want":"сегодня хорошо "}
+{"cat":"typo","got":"the project ","mode":"paced","ms":[40.8365,null],"ok":true,"target":"ghbdtn","want":"the project "}
+{"cat":"mixed","got":"запусти build и проверь ","mode":"paced","ms":[null,null,null,null],"ok":true,"target":"ghbdtn","want":"запусти build и проверь "}
+{"cat":"mixed","got":"открой github потом почту ","mode":"paced","ms":[null,88.83099999999999,null,null],"ok":true,"target":"ghbdtn","want":"открой github потом почту "}
+{"cat":"layout_ru","got":"привет как дела ","mode":"burst","ok":true,"target":"ghbdtn","want":"привет как дела "}
+{"cat":"layout_ru","got":"сегодня хорошая погода ","mode":"burst","ok":true,"target":"ghbdtn","want":"сегодня хорошая погода "}
+{"cat":"layout_ru","got":"я думаю что это работает ","mode":"burst","ok":true,"target":"ghbdtn","want":"я думаю что это работает "}
+{"cat":"layout_ru","got":"напиши мне завтра утром ","mode":"burst","ok":true,"target":"ghbdtn","want":"напиши мне завтра утром "}
+{"cat":"layout_ru","got":"можно посмотреть документы ","mode":"burst","ok":true,"target":"ghbdtn","want":"можно посмотреть документы "}
+{"cat":"layout_ru","got":"где находится ближайшая аптека ","mode":"burst","ok":true,"target":"ghbdtn","want":"где находится ближайшая аптека "}
+{"cat":"layout_ru","got":"отправь отчёт коллегам ","mode":"burst","ok":true,"target":"ghbdtn","want":"отправь отчёт коллегам "}
+{"cat":"layout_en","got":"hello world ","mode":"burst","ok":true,"target":"ghbdtn","want":"hello world "}
+{"cat":"layout_en","got":"please check the build ","mode":"burst","ok":true,"target":"ghbdtn","want":"please check the build "}
+{"cat":"layout_en","got":"open the settings window ","mode":"burst","ok":true,"target":"ghbdtn","want":"open the settings window "}
+{"cat":"layout_en","got":"this is a simple test ","mode":"burst","ok":true,"target":"ghbdtn","want":"this is a simple test "}
+{"cat":"layout_en","got":"remote server returned error ","mode":"burst","ok":true,"target":"ghbdtn","want":"remote server returned error "}
+{"actions":13,"burst_ok":12,"burst_total":12,"dropped":0,"engine_fixes":38,"engine_ms_avg":27.935,"engine_ms_max":53.007,"engine_ms_without_send":4.295,"hold_left":0,"mode":"summary","ms_max":109.6061,"ms_p50":61.3616,"ms_p95":88.83099999999999,"paced_ok":30,"paced_total":30,"replayed":206,"send_ms_per_event":1.294,"stages":{"decide":{"avg_ms":0.234,"max_ms":6.521,"n":144},"evaluate":{"avg_ms":0.063,"max_ms":0.21,"n":144},"queue":{"avg_ms":0.773,"max_ms":24.133,"n":144},"send":{"avg_ms":23.639,"max_ms":50.291,"n":38},"switch":{"avg_ms":3.943,"max_ms":6.06,"n":32}},"target":"ghbdtn"}
